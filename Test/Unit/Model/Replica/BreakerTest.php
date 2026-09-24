@@ -27,7 +27,8 @@ class BreakerTest extends SplitAdapterTestCase
     {
         $this->breaker()->trip('invented reason');
 
-        $this->assertSame(['kingletas_read_split.breaker'], $this->markers());
+        $this->assertCount(1, $this->markers());
+        $this->assertMatchesRegularExpression('/^kingletas_read_split-[0-9a-f]{16}\.breaker$/', $this->markers()[0]);
         $this->clock->advance(29);
         $this->assertFalse($this->breaker()->allowsAttempt());
         $this->assertFalse($this->breaker()->allowsAttempt());
@@ -98,21 +99,88 @@ class BreakerTest extends SplitAdapterTestCase
         $this->assertFalse($this->breaker()->claimHealthCheck());
         $this->clock->advance(1);
         $this->assertTrue($this->breaker()->claimHealthCheck());
-        $this->assertContains('kingletas_read_split.checked', $this->markers());
+        $this->assertMatchesRegularExpression('/\.checked$/', implode(' ', $this->markers()));
     }
 
-    public function testAVarDirectoryItCannotWriteIsLoggedNotThrown(): void
+    public function testAnUnwritableVarFallsBackToTheTempDirectoryWithOneWarningPerTrip(): void
     {
         $this->logger = $this->createMock(LoggerInterface::class);
-        $this->logger->expects($this->atLeastOnce())->method('warning');
-        rmdir($this->varDir);
+        $this->logger->expects($this->once())->method('warning')->with($this->stringContains('temp'));
+        $this->makeVarUnwritable();
+
+        $this->breaker()->trip('invented reason');
+        $this->clock->advance(29);
+
+        $this->assertFalse($this->breaker()->allowsAttempt());
+        $this->assertCount(1, $this->markersIn($this->tempDir));
+        $this->clock->advance(1);
+        $probe = $this->breaker();
+        $this->assertTrue($probe->allowsAttempt());
+        $probe->trip('invented reason');
+        $this->assertFalse($this->breaker()->allowsAttempt());
+    }
+
+    public function testARecoveryClosesAFallbackMarkerToo(): void
+    {
+        $this->makeVarUnwritable();
+        $this->breaker()->trip('invented reason');
+        $this->clock->advance(30);
+        $probe = $this->breaker();
+        $probe->allowsAttempt();
+
+        $probe->recordSuccess();
+
+        $this->assertSame([], $this->markersIn($this->tempDir));
+        $this->assertTrue($this->breaker()->allowsAttempt());
+    }
+
+    public function testWithNeitherDirectoryWritableThereIsNoBreakerAndATripWarnsWithoutThrowing(): void
+    {
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->exactly(2))->method('warning')->with($this->stringContains('no breaker'));
+        $this->makeVarUnwritable();
+        rmdir($this->tempDir);
 
         $breaker = $this->breaker();
         $breaker->trip('invented reason');
-        $breaker->claimHealthCheck();
+        $this->assertTrue($this->breaker()->allowsAttempt());
+        $this->assertFalse($this->breaker()->claimHealthCheck());
+        $this->breaker()->trip('invented reason');
 
-        mkdir($this->varDir);
-        $this->assertSame([], $this->markers());
+        mkdir($this->tempDir);
+    }
+
+    public function testTwoInstallationsOnOneNodeNeverShareAMarker(): void
+    {
+        $this->installRoot = '/invented/store-a';
+        $this->breaker()->withReplicaHost('db-replica.example')->trip('invented reason');
+        $this->installRoot = '/invented/store-b';
+
+        $this->assertTrue($this->breaker()->withReplicaHost('db-replica.example')->allowsAttempt());
+        $this->assertCount(1, $this->markers());
+    }
+
+    public function testTwoReplicaHostsNeverShareAMarker(): void
+    {
+        $this->breaker()->withReplicaHost('db-replica-a.example')->trip('invented reason');
+
+        $this->assertFalse($this->breaker()->withReplicaHost('db-replica-a.example')->allowsAttempt());
+        $this->assertTrue($this->breaker()->withReplicaHost('db-replica-b.example')->allowsAttempt());
+    }
+
+    public function testMarkerNamesDifferByInstallationAndByHost(): void
+    {
+        $names = [];
+
+        foreach (['/invented/store-a', '/invented/store-b'] as $root) {
+            foreach (['db-replica-a.example', 'db-replica-b.example'] as $host) {
+                $this->installRoot = $root;
+                $this->breaker()->withReplicaHost($host)->trip('invented reason');
+            }
+        }
+
+        $names = $this->markers();
+        $this->assertCount(4, array_unique($names));
     }
 
     /**

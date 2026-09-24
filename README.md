@@ -50,7 +50,9 @@ If the primary cannot give a position, the cookie holds the visitor on the prima
 
 ## When the replica is down or has stopped replicating
 
-**Each web node keeps a breaker: while it is open, no request on that node tries the replica, and every read goes to the primary.** It is two marker files in Magento's `var/` directory, `kingletas_read_split.breaker` and `kingletas_read_split.checked`, and the age of a file is what counts. It is deliberately not kept in Magento's cache: this module sits beneath the cache, and a cache backend may itself be down or kept in the database.
+**Each web node keeps a breaker: while it is open, no request on that node tries the replica, and every read goes to the primary.** It is two marker files in Magento's `var/` directory, `kingletas_read_split-<hash>.breaker` and `kingletas_read_split-<hash>.checked`, and the age of a file is what counts. The hash is of the installation's root path and the replica host, so two stores, or two Magento trees, on one node never share a breaker. It is deliberately not kept in Magento's cache: this module sits beneath the cache, and a cache backend may itself be down or kept in the database.
+
+**When `var/` cannot be written, the markers go to the system temp directory instead**, which is still per node, outside the cache, and kept between requests; the warning when the breaker opens says so. Under systemd's `PrivateTmp`, that directory is private to the PHP service, which is still one per node. **Only when neither can be written is there no breaker:** every request then tries the replica, and each failed attempt logs a warning saying there is no breaker. Nothing throws.
 
 **These open it:**
 

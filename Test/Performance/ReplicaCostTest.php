@@ -55,7 +55,7 @@ class ReplicaCostTest extends SplitAdapterTestCase
         $looks = [$this->markerLooksFor(1), $this->markerLooksFor(200)];
 
         $this->assertSame($looks[0], $looks[1]);
-        $this->assertLessThanOrEqual(3, $looks[0], 'The breaker marker, and the replication marker when due');
+        $this->assertLessThanOrEqual(6, $looks[0], 'Two markers, each in var/ and in the temp directory');
     }
 
     private function markerLooksFor(int $reads): int

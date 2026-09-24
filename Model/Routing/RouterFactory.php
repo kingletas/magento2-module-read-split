@@ -42,7 +42,7 @@ class RouterFactory
             $settings->replicaConfig(),
             $settings->maxLag(),
             $this->replicaConnector,
-            $this->breaker,
+            $this->breaker->withReplicaHost((string) ($settings->replicaConfig()['host'] ?? '')),
             $this->replicationStatus,
             $dbLogger,
             $selectFactory

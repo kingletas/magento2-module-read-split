@@ -78,6 +78,16 @@ abstract class SplitAdapterTestCase extends TestCase
     protected string $varDir;
 
     /**
+     * The system temp directory for this test, where the breaker falls back when var/ cannot be written.
+     */
+    protected string $tempDir;
+
+    /**
+     * The Magento installation's root, which with the replica host names the breaker's markers.
+     */
+    protected string $installRoot = '/invented/store';
+
+    /**
      * @var string[]
      */
     private array $varDirs = [];
@@ -87,6 +97,9 @@ abstract class SplitAdapterTestCase extends TestCase
         $this->varDir = sys_get_temp_dir() . '/kingletas-read-split-test-' . bin2hex(random_bytes(6));
         mkdir($this->varDir);
         $this->varDirs[] = $this->varDir;
+        $this->tempDir = $this->varDir . '-tmp';
+        mkdir($this->tempDir);
+        $this->varDirs[] = $this->tempDir;
         $this->scope = new FixedScope();
         $this->clock = new MovableClock();
         $this->cookies = new CookieJar();
@@ -101,7 +114,10 @@ abstract class SplitAdapterTestCase extends TestCase
     {
         foreach ($this->varDirs as $dir) {
             array_map('unlink', glob($dir . '/*') ?: []);
-            rmdir($dir);
+
+            if (is_dir($dir)) {
+                rmdir($dir);
+            }
         }
 
         $this->varDirs = [];
@@ -116,8 +132,33 @@ abstract class SplitAdapterTestCase extends TestCase
         $directoryList->method('getPath')->willReturnCallback(
             fn (string $code): string => $code === DirectoryList::VAR_DIR ? $this->varDir : '/nowhere'
         );
+        $directoryList->method('getRoot')->willReturn($this->installRoot);
 
-        return new Breaker($directoryList, $file ?? new File(), $this->clock, $this->logger);
+        return new Breaker(
+            $directoryList,
+            $file ?? new File(),
+            $this->clock,
+            $this->logger,
+            'kingletas_read_split',
+            $this->tempDir
+        );
+    }
+
+    /**
+     * Magento's var/ directory stops being writable, as on a store whose var/ belongs to another user.
+     */
+    protected function makeVarUnwritable(): void
+    {
+        array_map('unlink', glob($this->varDir . '/*') ?: []);
+        rmdir($this->varDir);
+    }
+
+    /**
+     * @return string[] the breaker's marker files in a directory
+     */
+    protected function markersIn(string $dir): array
+    {
+        return array_map('basename', glob($dir . '/kingletas_read_split*') ?: []);
     }
 
     /**
