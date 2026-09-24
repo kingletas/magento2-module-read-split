@@ -74,6 +74,15 @@
     </rule>
 
     <!--
+        mysqlnd takes its read timeout from this setting when a connection is
+        made, and PDO offers no other way to give one, so this one class sets
+        it for the replica's connect and restores it at once.
+    -->
+    <rule ref="Magento2.Functions.DiscouragedFunction">
+        <exclude-pattern>Model/Replica/NetReadTimeout.php</exclude-pattern>
+    </rule>
+
+    <!--
         A docblock that only restates a native signature carries no
         information, so none is required.
     -->

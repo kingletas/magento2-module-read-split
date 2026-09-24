@@ -19,6 +19,9 @@ use Magento\Framework\App\ResourceConnection;
 use Magento\Framework\App\Response\Http as HttpResponse;
 use Magento\Framework\Event;
 use Magento\Framework\Event\Observer;
+use Magento\Framework\HTTP\PhpEnvironment\Request as PhpEnvironmentRequest;
+use Magento\Framework\HTTP\PhpEnvironment\Response as PhpEnvironmentResponse;
+use Magento\Framework\Webapi\Rest\Response as RestResponse;
 
 /**
  * One visitor's requests in a row: each starts a fresh connection, as each PHP request does, and ends by sending its
@@ -51,13 +54,30 @@ abstract class VisitorJourneyTestCase extends SplitAdapterTestCase
      */
     protected function sendResponse(?string $cacheControl): void
     {
+        $this->send($cacheControl, HttpRequest::class, HttpResponse::class);
+    }
+
+    /**
+     * Sends a REST response: the webapi_rest area has its own request and response classes, and the same event.
+     */
+    protected function sendRestResponse(): void
+    {
+        $this->send(null, PhpEnvironmentRequest::class, RestResponse::class);
+    }
+
+    /**
+     * @param class-string<PhpEnvironmentRequest> $requestClass
+     * @param class-string<PhpEnvironmentResponse> $responseClass
+     */
+    private function send(?string $cacheControl, string $requestClass, string $responseClass): void
+    {
         $resource = $this->createStub(ResourceConnection::class);
         $resource->method('getConnection')->willReturn($this->current);
 
-        $request = $this->createStub(HttpRequest::class);
+        $request = $this->createStub($requestClass);
         $request->method('isGet')->willReturn($this->method === 'GET');
         $request->method('isHead')->willReturn($this->method === 'HEAD');
-        $response = $this->createStub(HttpResponse::class);
+        $response = $this->createStub($responseClass);
         $response->method('getHeader')->willReturn(
             $cacheControl === null ? false : new GenericHeader('Cache-Control', $cacheControl)
         );

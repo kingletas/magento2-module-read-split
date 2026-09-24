@@ -13,11 +13,11 @@ use Kingletas\ReadSplit\Model\Adapter\ReadSplitMysql;
 use Kingletas\ReadSplit\Model\Gtid\PositionCookie;
 use Kingletas\ReadSplit\Model\Request\WriteLedger;
 use Kingletas\ReadSplit\Model\Response\Cacheability;
-use Magento\Framework\App\Request\Http as HttpRequest;
 use Magento\Framework\App\ResourceConnection;
-use Magento\Framework\App\Response\Http as HttpResponse;
 use Magento\Framework\Event\Observer;
 use Magento\Framework\Event\ObserverInterface;
+use Magento\Framework\HTTP\PhpEnvironment\Request as HttpRequest;
+use Magento\Framework\HTTP\PhpEnvironment\Response as HttpResponse;
 use Psr\Log\LoggerInterface;
 use Throwable;
 

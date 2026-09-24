@@ -20,7 +20,7 @@ class ReadAfterWriteGateTest extends SplitAdapterTestCase
 {
     public function testWithNoPositionTheReplicaAnswersWithoutAnyCheck(): void
     {
-        $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM quote'));
+        $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity'));
         $this->assertSame(0, $this->replica->gtidChecks());
     }
 
@@ -28,8 +28,8 @@ class ReadAfterWriteGateTest extends SplitAdapterTestCase
     {
         $this->arriveWithPosition('0-1-512');
 
-        $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM quote'));
-        $this->assertSame(['MASTER_GTID_WAIT', 'SELECT * FROM quote'], $this->replica->sql());
+        $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity'));
+        $this->assertSame(['MASTER_GTID_WAIT', 'SELECT * FROM catalog_product_entity'], $this->replica->sql());
         $this->assertSame(['0-1-512'], $this->replica->statements[0]['bind'], 'The position is bound, not in the SQL');
     }
 
@@ -40,8 +40,8 @@ class ReadAfterWriteGateTest extends SplitAdapterTestCase
         $adapter = $this->adapter();
 
         $answers = [
-            $this->answeredBy($adapter, 'SELECT * FROM quote'),
-            $this->answeredBy($adapter, 'SELECT * FROM quote_item'),
+            $this->answeredBy($adapter, 'SELECT * FROM catalog_product_entity'),
+            $this->answeredBy($adapter, 'SELECT * FROM catalog_product_entity_int'),
         ];
 
         $this->assertSame(['primary', 'primary'], $answers);
@@ -55,7 +55,7 @@ class ReadAfterWriteGateTest extends SplitAdapterTestCase
         $adapter = $this->adapter();
 
         for ($read = 0; $read < 10; ++$read) {
-            $this->answeredBy($adapter, 'SELECT * FROM quote');
+            $this->answeredBy($adapter, 'SELECT * FROM catalog_product_entity');
         }
 
         $this->assertSame(1, $this->replica->gtidChecks());
@@ -64,9 +64,9 @@ class ReadAfterWriteGateTest extends SplitAdapterTestCase
     public function testAnExpiredPositionIsIgnored(): void
     {
         $this->replica->caughtUp['replica'] = false;
-        $this->arriveWithPosition('0-1-512', 11);
+        $this->arriveWithPosition('0-1-512', 31);
 
-        $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM quote'));
+        $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity'));
         $this->assertSame(0, $this->replica->gtidChecks());
     }
 
@@ -74,7 +74,7 @@ class ReadAfterWriteGateTest extends SplitAdapterTestCase
     {
         $this->arriveWithPosition('');
 
-        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM quote'));
+        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity'));
         $this->assertSame(0, $this->replica->connects);
     }
 
@@ -98,7 +98,7 @@ class ReadAfterWriteGateTest extends SplitAdapterTestCase
         $this->cookies->incoming['kingletas_read_split'] = $value;
         $adapter = $this->adapter();
 
-        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM quote'));
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM catalog_product_entity'));
         $this->assertSame(0, $this->replica->connects, 'Nothing from the value reaches the replica');
         $this->assertFalse($this->ledger->hasWritten());
         $this->assertSame([], $this->cookies->set);
@@ -111,7 +111,7 @@ class ReadAfterWriteGateTest extends SplitAdapterTestCase
         $value = $this->encryptor($otherKey)->encrypt('rs1|1800000000|0-1-512');
         $this->cookies->incoming['kingletas_read_split'] = $value;
 
-        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM quote'));
+        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity'));
         $this->assertSame(0, $this->replica->connects);
     }
 
@@ -120,21 +120,21 @@ class ReadAfterWriteGateTest extends SplitAdapterTestCase
         $this->arriveWithPosition('0-1-512');
         $adapter = $this->adapter(['pooled' => true]);
 
-        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM quote'));
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM catalog_product_entity'));
         $this->assertSame(0, $this->replica->connects);
         $this->assertSame(0, $this->replica->gtidChecks());
     }
 
     public function testPooledSendsAVisitorWithoutAPositionToTheReplica(): void
     {
-        $this->assertSame('replica', $this->answeredBy($this->adapter(['pooled' => true]), 'SELECT * FROM quote'));
+        $this->assertSame('replica', $this->answeredBy($this->adapter(['pooled' => true]), 'SELECT * FROM cms_page'));
         $this->assertSame(0, $this->replica->gtidChecks());
     }
 
     public function testPooledReleasesTheVisitorOnceThePositionExpires(): void
     {
-        $this->arriveWithPosition('0-1-512', 11);
+        $this->arriveWithPosition('0-1-512', 31);
 
-        $this->assertSame('replica', $this->answeredBy($this->adapter(['pooled' => true]), 'SELECT * FROM quote'));
+        $this->assertSame('replica', $this->answeredBy($this->adapter(['pooled' => true]), 'SELECT * FROM cms_page'));
     }
 }

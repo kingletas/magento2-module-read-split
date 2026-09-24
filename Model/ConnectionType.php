@@ -30,7 +30,7 @@ class ConnectionType extends CoreConnectionType
     ) {
         $this->split = $settingsReader->read($config)->isActive();
 
-        parent::__construct($this->split ? $config : $settingsReader->withoutSettings($config), $mysqlFactory);
+        parent::__construct($config, $mysqlFactory);
     }
 
     /**

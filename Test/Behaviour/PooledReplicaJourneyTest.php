@@ -33,7 +33,7 @@ class PooledReplicaJourneyTest extends VisitorJourneyTestCase
         $this->writeInOneRequest();
 
         $page = $this->startRequest('GET');
-        $answer = $this->answeredBy($page, 'SELECT * FROM quote WHERE entity_id = 3');
+        $answer = $this->answeredBy($page, 'SELECT * FROM catalog_product WHERE entity_id = 3');
 
         $check = $this->replica->statements[0];
 
@@ -48,8 +48,8 @@ class PooledReplicaJourneyTest extends VisitorJourneyTestCase
 
         $page = $this->startRequest('GET');
         $answers = [
-            $this->answeredBy($page, 'SELECT * FROM quote WHERE entity_id = 3'),
-            $this->answeredBy($page, 'SELECT * FROM quote_item WHERE quote_id = 3'),
+            $this->answeredBy($page, 'SELECT * FROM catalog_product WHERE entity_id = 3'),
+            $this->answeredBy($page, 'SELECT * FROM catalog_product_entity_int WHERE entity_id = 3'),
         ];
 
         $this->assertSame(['primary', 'primary'], $answers);
@@ -60,12 +60,12 @@ class PooledReplicaJourneyTest extends VisitorJourneyTestCase
     {
         $this->readSplit = ['pooled' => true];
         $this->writeInOneRequest();
-        $this->clock->advance(11);
+        $this->clock->advance(31);
 
         $page = $this->startRequest('GET');
         $answers = [
-            $this->answeredBy($page, 'SELECT * FROM quote WHERE entity_id = 3'),
-            $this->answeredBy($page, 'SELECT * FROM quote_item WHERE quote_id = 3'),
+            $this->answeredBy($page, 'SELECT * FROM catalog_product WHERE entity_id = 3'),
+            $this->answeredBy($page, 'SELECT * FROM catalog_product_entity_int WHERE entity_id = 3'),
         ];
 
         $this->assertSame(['backend-a', 'backend-b'], $answers);

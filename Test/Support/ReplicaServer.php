@@ -61,6 +61,8 @@ class ReplicaServer implements ReplicaConnectorInterface
      */
     public array $lastConfig = [];
 
+    public int $lastReadTimeout = 0;
+
     private int $next = 0;
 
     /**
@@ -77,10 +79,12 @@ class ReplicaServer implements ReplicaConnectorInterface
     public function connect(
         array $config,
         LoggerInterface $logger,
-        SelectFactory $selectFactory
+        SelectFactory $selectFactory,
+        int $readTimeout
     ): ReplicaConnectionInterface {
         ++$this->connects;
         $this->lastConfig = $config;
+        $this->lastReadTimeout = $readTimeout;
 
         if ($this->refuseConnections) {
             throw new RuntimeException('Connection refused by the invented replica.');

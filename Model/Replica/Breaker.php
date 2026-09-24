@@ -23,6 +23,8 @@ class Breaker implements ResetAfterRequestInterface
 {
     private const int WINDOW = 30;
 
+    private const int QUIET = 3600;
+
     private bool $probing = false;
 
     private string $replicaHost = '';
@@ -141,6 +143,19 @@ class Breaker implements ResetAfterRequestInterface
         $age = $this->age('checked');
 
         return ($age === null || $age >= self::WINDOW) && $this->touch('checked') !== null;
+    }
+
+    /**
+     * Logs a warning about the settings at most once an hour on this node, or every time when no marker can be kept.
+     */
+    public function warnOccasionally(string $kind, string $message): void
+    {
+        $age = $this->age($kind);
+
+        if ($age === null || $age >= self::QUIET) {
+            $this->touch($kind);
+            $this->logger->warning($message);
+        }
     }
 
     /**

@@ -11,6 +11,7 @@ namespace Kingletas\ReadSplit\Test\Unit\Model\Replica;
 
 use Kingletas\ReadSplit\Model\Replica\PdoReplicaConnection;
 use Kingletas\ReadSplit\Model\Replica\PdoReplicaConnector;
+use Kingletas\ReadSplit\Model\Replica\ReplicaMysql;
 use Magento\Framework\DB\Adapter\Pdo\Mysql;
 use Magento\Framework\DB\Adapter\Pdo\MysqlFactory;
 use Magento\Framework\DB\Logger\Quiet;
@@ -24,32 +25,42 @@ use Zend_Db_Statement_Interface;
 
 class PdoReplicaConnectionTest extends TestCase
 {
-    public function testTheConnectorOpensTheCoreAdapterAtOnceSoARefusalFailsHere(): void
+    public function testTheConnectorOpensTheReplicaAdapterAtOnceWithItsReadTimeout(): void
     {
-        $adapter = $this->createMock(Mysql::class);
-        $adapter->expects($this->once())->method('getConnection');
+        $adapter = $this->createMock(ReplicaMysql::class);
+        $adapter->expects($this->once())->method('connectWithin')->with(5);
         $factory = $this->createMock(MysqlFactory::class);
         $factory->expects($this->once())
             ->method('create')
-            ->with(Mysql::class, ['host' => 'db-replica.example'])
+            ->with(ReplicaMysql::class, ['host' => 'db-replica.example'])
             ->willReturn($adapter);
 
         $connection = (new PdoReplicaConnector($factory))
-            ->connect(['host' => 'db-replica.example'], new Quiet(), new SelectFactory(new SelectRenderer([])));
+            ->connect(['host' => 'db-replica.example'], new Quiet(), new SelectFactory(new SelectRenderer([])), 5);
 
         $this->assertInstanceOf(PdoReplicaConnection::class, $connection);
     }
 
-    public function testARefusedConnectionThrows(): void
+    public function testARefusedOrStalledConnectionThrows(): void
     {
-        $adapter = $this->createStub(Mysql::class);
-        $adapter->method('getConnection')->willThrowException(new RuntimeException('invented refusal'));
+        $adapter = $this->createStub(ReplicaMysql::class);
+        $adapter->method('connectWithin')->willThrowException(new RuntimeException('invented refusal'));
         $factory = $this->createStub(MysqlFactory::class);
         $factory->method('create')->willReturn($adapter);
 
         $this->expectException(RuntimeException::class);
 
-        (new PdoReplicaConnector($factory))->connect([], new Quiet(), new SelectFactory(new SelectRenderer([])));
+        (new PdoReplicaConnector($factory))->connect([], new Quiet(), new SelectFactory(new SelectRenderer([])), 5);
+    }
+
+    public function testAnAdapterThatIsNotTheReplicaAdapterIsRefused(): void
+    {
+        $factory = $this->createStub(MysqlFactory::class);
+        $factory->method('create')->willReturn($this->createStub(Mysql::class));
+
+        $this->expectException(UnexpectedValueException::class);
+
+        (new PdoReplicaConnector($factory))->connect([], new Quiet(), new SelectFactory(new SelectRenderer([])), 5);
     }
 
     /**

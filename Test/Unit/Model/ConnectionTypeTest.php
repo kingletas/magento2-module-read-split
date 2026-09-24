@@ -29,23 +29,24 @@ class ConnectionTypeTest extends TestCase
         'password' => 'invented-password',
     ];
 
-    public function testAnUnconfiguredConnectionRunsTheCoreAdapterWithItsConfigUnchanged(): void
+    private const array BUILT = self::PRIMARY + ['type' => 'pdo_mysql', 'active' => false];
+
+    public function testAnUnconfiguredStoreRunsTheCoreAdapterWithItsConfigUnchanged(): void
     {
-        $this->assertBuilds(Mysql::class, self::PRIMARY + ['type' => 'pdo_mysql', 'active' => false], self::PRIMARY);
+        $this->assertBuilds(Mysql::class, null);
     }
 
-    public function testTheKillSwitchRunsTheCoreAdapterWithoutTheBlock(): void
+    public function testTheKillSwitchRunsTheCoreAdapter(): void
     {
-        $config = self::PRIMARY + ['read_split' => ['enabled' => false, 'replica' => ['host' => 'db-replica.example']]];
-
-        $this->assertBuilds(Mysql::class, self::PRIMARY + ['type' => 'pdo_mysql', 'active' => false], $config);
+        $this->assertBuilds(Mysql::class, ['enabled' => false, 'replica' => ['host' => 'db-replica.example']]);
     }
 
-    public function testAConfiguredReplicaRunsThisModulesAdapterWithTheBlock(): void
+    /**
+     * Whichever adapter is built, its config is the connection's own, with nothing of this module's in it.
+     */
+    public function testAConfiguredReplicaRunsThisModulesAdapterWithTheConnectionsOwnConfig(): void
     {
-        $config = self::PRIMARY + ['read_split' => ['replica' => ['host' => 'db-replica.example']]];
-
-        $this->assertBuilds(ReadSplitMysql::class, $config + ['type' => 'pdo_mysql', 'active' => false], $config);
+        $this->assertBuilds(ReadSplitMysql::class, ['replica' => ['host' => 'db-replica.example']]);
     }
 
     public function testTheAdapterIsOneMagentosFactoryAccepts(): void
@@ -54,20 +55,25 @@ class ConnectionTypeTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $expectedConfig
-     * @param array<string, mixed> $config
+     * @param array<string, mixed>|null $block
      */
-    private function assertBuilds(string $class, array $expectedConfig, array $config): void
+    private function assertBuilds(string $class, ?array $block): void
     {
         $factory = $this->createMock(MysqlFactory::class);
         $factory->expects($this->once())
             ->method('create')
-            ->with($class, $expectedConfig)
+            ->with($class, self::BUILT)
             ->willReturn($this->createStub(Mysql::class));
 
         $deploymentConfig = $this->createStub(DeploymentConfig::class);
-        $deploymentConfig->method('get')->willReturn('');
+        $deploymentConfig->method('get')->willReturnCallback(
+            static fn (string $path): mixed => match ($path) {
+                'db/read_split' => $block,
+                'db/connection/default' => self::PRIMARY,
+                default => '',
+            }
+        );
 
-        (new ConnectionType($config, $factory, new SettingsReader($deploymentConfig)))->getConnection();
+        (new ConnectionType(self::PRIMARY, $factory, new SettingsReader($deploymentConfig)))->getConnection();
     }
 }

@@ -109,11 +109,14 @@ class WiringTest extends TestCase
         }
     }
 
-    public function testTheCookieIsSetOnlyInTheStorefrontAndGraphQlJustBeforeTheResponseIsSent(): void
+    /**
+     * REST is where Luma places orders, so a write there carries its position too, though REST never reads the replica.
+     */
+    public function testTheCookieIsSetInTheStorefrontGraphQlAndRestJustBeforeTheResponseIsSent(): void
     {
         $this->assertFileDoesNotExist($this->root() . '/etc/events.xml');
 
-        foreach (['frontend', 'graphql'] as $area) {
+        foreach (['frontend', 'graphql', 'webapi_rest'] as $area) {
             $events = $this->xml('etc/' . $area . '/events.xml');
             $observers = $events->xpath('//event[@name="controller_front_send_response_before"]/observer') ?: [];
 
@@ -125,7 +128,7 @@ class WiringTest extends TestCase
 
         $areas = array_map('basename', glob($this->root() . '/etc/*', GLOB_ONLYDIR) ?: []);
         sort($areas);
-        $this->assertSame(['frontend', 'graphql'], $areas);
+        $this->assertSame(['frontend', 'graphql', 'webapi_rest'], $areas);
     }
 
     /**

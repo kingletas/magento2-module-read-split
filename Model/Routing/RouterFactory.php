@@ -38,11 +38,22 @@ class RouterFactory
 
     public function create(Settings $settings, DbLogger $dbLogger, SelectFactory $selectFactory): Router
     {
+        $breaker = $this->breaker->withReplicaHost((string) ($settings->replicaConfig()['host'] ?? ''));
+
+        if ($settings->positionLifetimeWasRaised()) {
+            $breaker->warnOccasionally(
+                'lifetime',
+                'Read split: position_lifetime is shorter than max_lag, so it is raised to '
+                . $settings->positionLifetime() . ' seconds; set it to at least max_lag in env.php.'
+            );
+        }
+
         $replica = new Replica(
             $settings->replicaConfig(),
             $settings->maxLag(),
+            $settings->readTimeout(),
             $this->replicaConnector,
-            $this->breaker->withReplicaHost((string) ($settings->replicaConfig()['host'] ?? '')),
+            $breaker,
             $this->replicationStatus,
             $dbLogger,
             $selectFactory

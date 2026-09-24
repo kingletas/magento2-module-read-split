@@ -19,10 +19,12 @@ interface ReplicaConnectorInterface
 {
     /**
      * @param array<string, mixed> $config
+     * @param int $readTimeout seconds the replica may take to answer, from the handshake on
      */
     public function connect(
         array $config,
         LoggerInterface $logger,
-        SelectFactory $selectFactory
+        SelectFactory $selectFactory,
+        int $readTimeout
     ): ReplicaConnectionInterface;
 }

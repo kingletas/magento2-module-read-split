@@ -57,7 +57,7 @@ class ReadSplitMysql extends Mysql
             $dateTime,
             $logger,
             $selectFactory,
-            $settingsReader->withoutSettings($config),
+            $config,
             $serializer,
             $dtoFactoriesTable
         );

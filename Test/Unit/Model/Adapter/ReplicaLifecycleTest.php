@@ -39,7 +39,7 @@ class ReplicaLifecycleTest extends SplitAdapterTestCase
         $adapter->insert('quote', ['entity_id' => 3]);
 
         for ($read = 0; $read < 3; ++$read) {
-            $this->answeredBy($adapter, 'SELECT * FROM quote');
+            $this->answeredBy($adapter, 'SELECT * FROM catalog_product_entity');
         }
 
         $this->assertSame(0, $this->replica->connects);
@@ -112,6 +112,7 @@ class ReplicaLifecycleTest extends SplitAdapterTestCase
         $this->assertSame('invented_store', $this->replica->lastConfig['dbname']);
         $this->assertSame('invented-password', $this->replica->lastConfig['password']);
         $this->assertSame(3, $this->replica->lastConfig['driver_options'][PDO::ATTR_TIMEOUT]);
+        $this->assertSame(5, $this->replica->lastReadTimeout);
         $this->assertArrayNotHasKey('read_split', $this->replica->lastConfig);
     }
 

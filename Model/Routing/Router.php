@@ -194,7 +194,10 @@ class Router
             return '';
         }
 
-        $names = implode('|', array_map(static fn (string $table): string => preg_quote($table, '/'), $tables));
+        $names = implode('|', array_map(
+            static fn (string $table): string => str_replace('\\*', '\\w*', preg_quote($table, '/')),
+            $tables
+        ));
 
         return '/(?<![\w$])`?(?:' . $names . ')`?(?![\w$])/i';
     }

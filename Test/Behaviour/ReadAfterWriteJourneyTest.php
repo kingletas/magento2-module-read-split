@@ -32,14 +32,14 @@ class ReadAfterWriteJourneyTest extends VisitorJourneyTestCase
         // The section load that follows: the replica is behind, so the primary answers, and it writes quote_id_mask.
         $this->primary->position = '0-1-701';
         $sectionLoad = $this->startRequest('GET');
-        $this->assertSame('primary', $this->answeredBy($sectionLoad, 'SELECT * FROM quote WHERE entity_id = 3'));
+        $this->assertSame('primary', $this->answeredBy($sectionLoad, 'SELECT * FROM cms_page WHERE id = 3'));
         $sectionLoad->insert('quote_id_mask', ['quote_id' => 3, 'masked_id' => 'invented-mask']);
         $this->sendResponse(self::PRIVATE);
 
         // The cart page: the replica has caught up with the section load's write, so it answers.
         $this->replica->caughtUp['replica'] = true;
         $cart = $this->startRequest('GET');
-        $this->assertSame('replica', $this->answeredBy($cart, 'SELECT * FROM quote_id_mask WHERE quote_id = 3'));
+        $this->assertSame('replica', $this->answeredBy($cart, 'SELECT * FROM catalog_category WHERE entity_id = 3'));
         $this->sendResponse(self::PRIVATE);
 
         $checks = array_values(array_filter(
@@ -49,6 +49,29 @@ class ReadAfterWriteJourneyTest extends VisitorJourneyTestCase
         $this->assertSame([['0-1-700'], ['0-1-701']], array_column($checks, 'bind'));
     }
 
+    /**
+     * Luma places orders over REST, and the success page then read the new order from a lagging replica.
+     */
+    public function testAnOrderPlacedOverRestIsReadFromThePrimaryUntilTheReplicaHasIt(): void
+    {
+        $this->replica->caughtUp['replica'] = false;
+        $this->primary->position = '0-1-820';
+
+        $placeOrder = $this->startRequest('POST');
+        $placeOrder->insert('sales_order', ['entity_id' => 82]);
+        $placeOrder->insert('invented_order_log', ['order_id' => 82]);
+        $this->sendRestResponse();
+
+        $this->assertArrayHasKey('kingletas_read_split', $this->cookies->set, 'The REST write carries its position');
+
+        $success = $this->startRequest('GET');
+        $this->assertSame('primary', $this->answeredBy($success, 'SELECT * FROM invented_order_log WHERE id = 82'));
+        $this->assertSame([['0-1-820']], array_column(array_filter(
+            $this->replica->statements,
+            static fn (array $statement): bool => $statement['sql'] === 'MASTER_GTID_WAIT'
+        ), 'bind'));
+    }
+
     public function testOnceThePositionExpiresTheReplicaAnswersWithoutACheck(): void
     {
         $this->primary->position = '0-1-700';
@@ -56,10 +79,10 @@ class ReadAfterWriteJourneyTest extends VisitorJourneyTestCase
         $addToCart->insert('quote', ['entity_id' => 3]);
         $this->sendResponse(null);
 
-        $this->clock->advance(11);
+        $this->clock->advance(31);
         $page = $this->startRequest('GET');
 
-        $this->assertSame('replica', $this->answeredBy($page, 'SELECT * FROM quote WHERE entity_id = 3'));
+        $this->assertSame('replica', $this->answeredBy($page, 'SELECT * FROM catalog_product WHERE entity_id = 3'));
         $this->assertSame(0, $this->replica->gtidChecks());
     }
 

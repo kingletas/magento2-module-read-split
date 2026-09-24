@@ -46,9 +46,9 @@ class StatementRoutingTest extends SplitAdapterTestCase
     {
         return [
             'FOR UPDATE' => ['SELECT * FROM sequence_order_1 WHERE sequence_value = 5 FOR UPDATE'],
-            'FOR UPDATE NOWAIT' => ['SELECT * FROM quote WHERE entity_id = 5 FOR UPDATE NOWAIT'],
-            'LOCK IN SHARE MODE' => ['SELECT * FROM quote WHERE entity_id = 5 LOCK IN SHARE MODE'],
-            'FOR SHARE' => ['SELECT * FROM quote WHERE entity_id = 5 FOR SHARE'],
+            'FOR UPDATE NOWAIT' => ['SELECT * FROM catalog_product_entity WHERE entity_id = 5 FOR UPDATE NOWAIT'],
+            'LOCK IN SHARE MODE' => ['SELECT * FROM catalog_product_entity WHERE entity_id = 5 LOCK IN SHARE MODE'],
+            'FOR SHARE' => ['SELECT * FROM catalog_product_entity WHERE entity_id = 5 FOR SHARE'],
             'GET_LOCK' => ["SELECT GET_LOCK('invented_lock', 5);"],
             'RELEASE_LOCK' => ["SELECT RELEASE_LOCK('invented_lock');"],
             'IS_USED_LOCK' => ["SELECT IS_USED_LOCK('invented_lock');"],
@@ -56,8 +56,8 @@ class StatementRoutingTest extends SplitAdapterTestCase
             'FOUND_ROWS()' => ['SELECT FOUND_ROWS()'],
             'SQL_CALC_FOUND_ROWS' => ['SELECT SQL_CALC_FOUND_ROWS * FROM review LIMIT 10'],
             'a lock inside an executable comment' => ['SELECT * FROM quote /*!50000 FOR UPDATE */'],
-            'INTO a variable' => ['SELECT MAX(entity_id) INTO @invented_max FROM quote'],
-            'a variable assigned in a select' => ['SELECT @invented_row := entity_id FROM quote'],
+            'INTO a variable' => ['SELECT MAX(entity_id) INTO @invented_max FROM catalog_product_entity'],
+            'a variable assigned in a select' => ['SELECT @invented_row := entity_id FROM catalog_product_entity'],
             'a server variable' => ['SELECT @@version'],
         ];
     }
@@ -83,7 +83,7 @@ class StatementRoutingTest extends SplitAdapterTestCase
             'SHOW CREATE TABLE' => ['SHOW CREATE TABLE `quote`'],
             'DESCRIBE' => ['DESCRIBE `quote`'],
             'DESC' => ['DESC `quote`'],
-            'EXPLAIN' => ['EXPLAIN SELECT * FROM quote'],
+            'EXPLAIN' => ['EXPLAIN SELECT * FROM catalog_product_entity'],
         ];
     }
 
@@ -134,7 +134,7 @@ class StatementRoutingTest extends SplitAdapterTestCase
             'SET @@global.' => ["SET @@global.time_zone = '+00:00'"],
             'SET STATEMENT ... FOR' => ['SET STATEMENT max_statement_time = 1 FOR UPDATE quote SET is_active = 0'],
             'SET CHARACTER SET' => ['SET CHARACTER SET utf8mb4'],
-            'a user variable read from a table' => ['SET @invented_id = (SELECT MAX(entity_id) FROM quote)'],
+            'a user variable read from a table' => ['SET @invented_id = (SELECT MAX(entity_id) FROM cms_page)'],
         ];
     }
 
@@ -159,7 +159,7 @@ class StatementRoutingTest extends SplitAdapterTestCase
     {
         $adapter = $this->adapter();
 
-        $adapter->multiQuery('SELECT 1 FROM store; DELETE FROM quote WHERE entity_id = 3');
+        $adapter->multiQuery('SELECT 1 FROM store; DELETE FROM catalog_product WHERE entity_id = 3');
 
         $this->assertSame([], $this->replica->sql());
         $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM store'));
@@ -217,13 +217,65 @@ class StatementRoutingTest extends SplitAdapterTestCase
         $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM store'));
     }
 
-    public function testATableAddedToTheListIsReadFromThePrimaryAndSessionStaysOnIt(): void
+    public function testATableAddedToTheListIsReadFromThePrimaryAndTheDefaultsStay(): void
     {
-        $adapter = $this->adapter(['primary_only_tables' => ['quote_id_mask']]);
+        $adapter = $this->adapter(['primary_only_tables' => ['invented_log', 'invented_audit*']]);
 
-        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM quote_id_mask WHERE quote_id = 3'));
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM invented_log WHERE id = 3'));
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM invented_audit_entry WHERE id = 3'));
         $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM session WHERE session_id = 1'));
-        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM quote WHERE entity_id = 3'));
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM quote WHERE entity_id = 3'));
+        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM invented_logbook WHERE id = 3'));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function readsThatCouldMakeMagentoWriteSomethingWrong(): array
+    {
+        return [
+            'the quote' => ['SELECT `main_table`.* FROM `quote` AS `main_table` WHERE (entity_id = 707)'],
+            'quote items' => ['SELECT * FROM `quote_item` WHERE (quote_id = 707)'],
+            'quote addresses' => ['SELECT * FROM quote_address WHERE quote_id = 707'],
+            'a quote item option' => ['SELECT * FROM quote_item_option WHERE item_id = 9'],
+            'shipping rates' => ['SELECT * FROM quote_shipping_rate WHERE address_id = 9'],
+            'the masked cart id' => ['SELECT * FROM quote_id_mask WHERE masked_id = ?'],
+            'the order' => ['SELECT * FROM `sales_order` WHERE (entity_id = 82)'],
+            'order items' => ['SELECT * FROM sales_order_item WHERE order_id = 82'],
+            'the order grid' => ['SELECT * FROM sales_order_grid WHERE entity_id = 82'],
+            'a join onto the quote' => ['SELECT p.* FROM cms_page AS p INNER JOIN quote_item AS q ON q.item_id = p.id'],
+        ];
+    }
+
+    /**
+     * A stale read of these can make Magento write something wrong, as an empty quote read did when it dropped a cart.
+     */
+    #[DataProvider('readsThatCouldMakeMagentoWriteSomethingWrong')]
+    public function testAReadThatCouldMakeMagentoWriteSomethingWrongGoesToThePrimaryWithoutPinning(string $sql): void
+    {
+        $adapter = $this->adapter();
+
+        $this->assertSame('primary', $this->answeredBy($adapter, $sql));
+        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM catalog_product_entity'));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function tablesThePatternsDoNotReach(): array
+    {
+        return [
+            'cart price rules' => ['SELECT * FROM salesrule WHERE rule_id = 1'],
+            'invoices' => ['SELECT * FROM sales_invoice WHERE entity_id = 1'],
+            'a sequence table for orders' => ['SELECT * FROM sequence_order_1 WHERE sequence_value = 1'],
+            'a table ending in quote' => ['SELECT * FROM invented_quote WHERE id = 1'],
+        ];
+    }
+
+    #[DataProvider('tablesThePatternsDoNotReach')]
+    public function testTablesThePatternsDoNotReachStillGoToTheReplica(string $sql): void
+    {
+        $this->assertSame('replica', $this->answeredBy($this->adapter(), $sql));
     }
 
     public function testThePrimaryOnlyListFollowsTheTablePrefix(): void
@@ -269,7 +321,7 @@ class StatementRoutingTest extends SplitAdapterTestCase
     {
         $adapter = $this->adapter();
 
-        $adapter->prepare('SELECT * FROM quote WHERE entity_id = 3')->execute();
+        $adapter->prepare('SELECT * FROM catalog_product WHERE entity_id = 3')->execute();
 
         $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM store'));
         $this->assertFalse($this->ledger->hasWritten());
@@ -279,7 +331,7 @@ class StatementRoutingTest extends SplitAdapterTestCase
     {
         $adapter = $this->adapter();
 
-        $adapter->exec('DELETE FROM quote WHERE entity_id = 3');
+        $adapter->exec('DELETE FROM catalog_product WHERE entity_id = 3');
 
         $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM store'));
         $this->assertTrue($this->ledger->hasWritten());

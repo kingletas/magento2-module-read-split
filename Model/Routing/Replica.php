@@ -44,6 +44,7 @@ class Replica
     public function __construct(
         private readonly array $config,
         private readonly int $maxLag,
+        private readonly int $readTimeout,
         private readonly ReplicaConnectorInterface $connector,
         private readonly Breaker $breaker,
         private readonly ReplicationStatus $replicationStatus,
@@ -155,7 +156,12 @@ class Replica
      */
     private function open(string $position): void
     {
-        $this->connection = $this->connector->connect($this->config, $this->dbLogger, $this->selectFactory);
+        $this->connection = $this->connector->connect(
+            $this->config,
+            $this->dbLogger,
+            $this->selectFactory,
+            $this->readTimeout
+        );
 
         if ($this->breaker->isProbing() || $this->breaker->claimHealthCheck()) {
             $problem = $this->replicationStatus->problem($this->connection->replicationStatus(), $this->maxLag);

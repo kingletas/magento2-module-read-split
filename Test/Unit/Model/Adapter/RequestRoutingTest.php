@@ -79,7 +79,7 @@ class RequestRoutingTest extends SplitAdapterTestCase
         $adapter = $this->adapter();
         $adapter->beginTransaction();
 
-        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM quote WHERE entity_id = 3'));
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM catalog_product WHERE entity_id = 3'));
 
         $adapter->commit();
     }
@@ -92,11 +92,11 @@ class RequestRoutingTest extends SplitAdapterTestCase
         $adapter = $this->adapter();
         (new ReflectionProperty(Mysql::class, '_transactionLevel'))->setValue($adapter, 1);
 
-        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM quote WHERE entity_id = 3'));
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM catalog_product WHERE entity_id = 3'));
 
         (new ReflectionProperty(Mysql::class, '_transactionLevel'))->setValue($adapter, 0);
 
-        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM quote WHERE entity_id = 3'));
+        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM catalog_product WHERE entity_id = 3'));
     }
 
     /**

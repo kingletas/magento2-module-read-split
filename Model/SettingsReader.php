@@ -14,54 +14,67 @@ use Magento\Framework\Config\ConfigOptionsListConstants;
 use PDO;
 
 /**
- * Reads the `read_split` block of a connection's env.php config, and refuses anything it cannot use.
+ * Reads the `db/read_split` block of env.php, which sits beside the connections so no adapter is ever handed it.
  */
 class SettingsReader
 {
-    public const string KEY = 'read_split';
+    public const string PATH = 'db/read_split';
 
     private const array REPLICA_KEYS = ['host', 'dbname', 'username', 'password'];
 
+    /**
+     * Tables a stale read of which can lead Magento to write something wrong, so they are always read from the primary.
+     */
+    private const array DEFAULT_PRIMARY_ONLY = ['session', 'quote*', 'quote_id_mask', 'sales_order*'];
+
     public function __construct(
-        private readonly DeploymentConfig $deploymentConfig,
-        private readonly string $alwaysPrimaryTable = 'session'
+        private readonly DeploymentConfig $deploymentConfig
     ) {
     }
 
     /**
+     * The settings for one connection, active only when the block splits that connection.
+     *
      * @param array<string, mixed> $connectionConfig
      */
     public function read(array $connectionConfig): Settings
     {
-        $block = $connectionConfig[self::KEY] ?? null;
+        $block = $this->deploymentConfig->get(self::PATH);
 
-        if (!is_array($block) || !$this->isSwitchedOn($block) || !$this->hasReplicaHost($block)) {
+        if (!is_array($block) || !$this->isSwitchedOn($block) || !$this->hasReplicaHost($block)
+            || !$this->splits($block, $connectionConfig)
+        ) {
             return new Settings(active: false);
         }
 
+        $maxLag = $this->bounded($block['max_lag'] ?? null, 30, 1, 86400);
+        $lifetime = $this->number($block['position_lifetime'] ?? null);
+
         return new Settings(
             active: true,
-            replicaConfig: $this->replicaConfig($this->withoutSettings($connectionConfig), $block),
+            replicaConfig: $this->replicaConfig($connectionConfig, $block),
             pooled: ($block['pooled'] ?? false) === true,
             primaryOnlyTables: $this->primaryOnlyTables($block['primary_only_tables'] ?? []),
-            positionLifetime: $this->bounded($block['position_lifetime'] ?? null, 10, 1, 300),
-            maxLag: $this->bounded($block['max_lag'] ?? null, 30, 1, 86400)
+            positionLifetime: $lifetime === null || $lifetime < $maxLag ? $maxLag : min($lifetime, 300),
+            maxLag: $maxLag,
+            readTimeout: $this->bounded($block['read_timeout'] ?? null, 5, 1, 60),
+            positionLifetimeWasRaised: $lifetime !== null && $lifetime < $maxLag
         );
     }
 
     /**
-     * The config the core adapter is given, which never carries this module's block.
+     * The block splits the connection it names, the default one unless it says otherwise.
      *
+     * @param array<mixed> $block
      * @param array<string, mixed> $connectionConfig
-     * @return array<string, mixed>
      */
-    public function withoutSettings(array $connectionConfig): array
+    private function splits(array $block, array $connectionConfig): bool
     {
-        unset($connectionConfig[self::KEY]);
+        $name = is_string($block['connection'] ?? null) ? $block['connection'] : 'default';
+        $named = $this->deploymentConfig->get('db/connection/' . $name);
 
-        return $connectionConfig;
+        return is_array($named) && $named == $connectionConfig;
     }
-
     /**
      * @param array<mixed> $block
      */
@@ -112,10 +125,10 @@ class SettingsReader
     private function primaryOnlyTables(mixed $configured): array
     {
         $prefix = (string) $this->deploymentConfig->get(ConfigOptionsListConstants::CONFIG_PATH_DB_PREFIX);
-        $names = [$this->alwaysPrimaryTable];
+        $names = self::DEFAULT_PRIMARY_ONLY;
 
         foreach (is_array($configured) ? $configured : [] as $table) {
-            if (is_string($table) && preg_match('/^\w+$/D', $table) === 1) {
+            if (is_string($table) && preg_match('/^\w+\*?$/D', $table) === 1) {
                 $names[] = $table;
             }
         }
@@ -128,10 +141,14 @@ class SettingsReader
 
     private function bounded(mixed $value, int $default, int $min, int $max): int
     {
-        if (!is_int($value) && !(is_string($value) && ctype_digit($value))) {
-            return $default;
-        }
+        return max($min, min($max, $this->number($value) ?? $default));
+    }
 
-        return max($min, min($max, (int) $value));
+    /**
+     * A whole number of seconds as env.php may write it, or null when the value is not one.
+     */
+    private function number(mixed $value): ?int
+    {
+        return is_int($value) || (is_string($value) && ctype_digit($value)) ? (int) $value : null;
     }
 }

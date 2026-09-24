@@ -91,7 +91,7 @@ class ReplicaCostTest extends SplitAdapterTestCase
         $adapter->insert('quote', ['entity_id' => 3]);
 
         for ($read = 0; $read < $reads; ++$read) {
-            $adapter->fetchOne('SELECT * FROM quote');
+            $adapter->fetchOne('SELECT * FROM catalog_product_entity');
         }
 
         return $this->classifier instanceof CountingClassifier ? $this->classifier->classified : -1;

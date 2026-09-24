@@ -23,8 +23,10 @@ class Settings
         private readonly array $replicaConfig = [],
         private readonly bool $pooled = false,
         private readonly array $primaryOnlyTables = [],
-        private readonly int $positionLifetime = 10,
-        private readonly int $maxLag = 30
+        private readonly int $positionLifetime = 30,
+        private readonly int $maxLag = 30,
+        private readonly int $readTimeout = 5,
+        private readonly bool $positionLifetimeWasRaised = false
     ) {
     }
 
@@ -58,6 +60,22 @@ class Settings
     public function primaryOnlyTables(): array
     {
         return $this->primaryOnlyTables;
+    }
+
+    /**
+     * Seconds the replica may take to answer before the request gives up on it, from connect to the last row.
+     */
+    public function readTimeout(): int
+    {
+        return $this->readTimeout;
+    }
+
+    /**
+     * True when env.php asked for a position shorter than max_lag, which was raised to it.
+     */
+    public function positionLifetimeWasRaised(): bool
+    {
+        return $this->positionLifetimeWasRaised;
     }
 
     /**

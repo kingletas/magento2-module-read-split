@@ -9,17 +9,63 @@ declare(strict_types=1);
 
 namespace Kingletas\ReadSplit\Test\Unit\Model;
 
+use Kingletas\ReadSplit\Model\Settings;
 use Kingletas\ReadSplit\Model\SettingsReader;
 use Magento\Framework\App\DeploymentConfig;
 use PDO;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
+/**
+ * The block lives at db/read_split, beside the connections, where no adapter ever reads it.
+ */
 class SettingsReaderTest extends TestCase
 {
-    public function testAConnectionWithNoBlockIsNotSplit(): void
+    private const array DEFAULT_CONNECTION = [
+        'host' => 'db-primary.example',
+        'dbname' => 'invented_store',
+        'username' => 'invented_user',
+        'password' => 'invented-password',
+        'active' => '1',
+    ];
+
+    public function testAStoreWithNoBlockIsNotSplit(): void
     {
-        $this->assertFalse($this->reader()->read($this->primary())->isActive());
+        $this->assertFalse($this->reader(null)->read(self::DEFAULT_CONNECTION)->isActive());
+    }
+
+    public function testTheBlockSplitsTheDefaultConnection(): void
+    {
+        $settings = $this->reader(['replica' => ['host' => 'db-replica.example']])->read(self::DEFAULT_CONNECTION);
+
+        $this->assertTrue($settings->isActive());
+        $this->assertSame('db-replica.example', $settings->replicaConfig()['host']);
+    }
+
+    public function testAnotherConnectionIsNotSplit(): void
+    {
+        $indexer = ['host' => 'db-indexer.example'] + self::DEFAULT_CONNECTION;
+
+        $this->assertFalse($this->reader(['replica' => ['host' => 'db-replica.example']])->read($indexer)->isActive());
+    }
+
+    public function testTheBlockCanNameTheConnectionItSplits(): void
+    {
+        $checkout = ['host' => 'db-checkout.example'] + self::DEFAULT_CONNECTION;
+        $reader = $this->reader(['connection' => 'checkout', 'replica' => ['host' => 'db-replica.example']], $checkout);
+
+        $this->assertTrue($reader->read($checkout)->isActive());
+        $this->assertFalse($reader->read(self::DEFAULT_CONNECTION)->isActive());
+    }
+
+    /**
+     * The block's old place is not read at all, since setup hands that config to a raw adapter.
+     */
+    public function testABlockLeftInsideTheConnectionIsIgnored(): void
+    {
+        $nested = self::DEFAULT_CONNECTION + ['read_split' => ['replica' => ['host' => 'db-replica.example']]];
+
+        $this->assertFalse($this->reader(null, $nested)->read($nested)->isActive());
     }
 
     /**
@@ -39,9 +85,9 @@ class SettingsReaderTest extends TestCase
     #[DataProvider('switchedOff')]
     public function testTheKillSwitchTurnsItOff(mixed $enabled): void
     {
-        $config = $this->primary(['enabled' => $enabled, 'replica' => ['host' => 'db-replica.example']]);
+        $reader = $this->reader(['enabled' => $enabled, 'replica' => ['host' => 'db-replica.example']]);
 
-        $this->assertFalse($this->reader()->read($config)->isActive());
+        $this->assertFalse($reader->read(self::DEFAULT_CONNECTION)->isActive());
     }
 
     /**
@@ -62,120 +108,145 @@ class SettingsReaderTest extends TestCase
     #[DataProvider('noReplicaHost')]
     public function testWithoutAReplicaHostItIsOff(mixed $block): void
     {
-        $config = $this->primary();
-        $config['read_split'] = $block;
-
-        $this->assertFalse($this->reader()->read($config)->isActive());
+        $this->assertFalse($this->reader($block)->read(self::DEFAULT_CONNECTION)->isActive());
     }
 
-    public function testAReplicaHostTurnsItOnWithTheDefaults(): void
+    public function testTheDefaults(): void
     {
-        $settings = $this->reader()->read($this->primary(['replica' => ['host' => 'db-replica.example']]));
+        $settings = $this->reader(['replica' => ['host' => 'db-replica.example']])->read(self::DEFAULT_CONNECTION);
 
-        $this->assertTrue($settings->isActive());
         $this->assertFalse($settings->isPooled());
-        $this->assertSame(['session'], $settings->primaryOnlyTables());
-        $this->assertSame(10, $settings->positionLifetime());
         $this->assertSame(30, $settings->maxLag());
+        $this->assertSame(30, $settings->positionLifetime(), 'A position lives as long as the replica may lag');
+        $this->assertFalse($settings->positionLifetimeWasRaised());
         $this->assertSame(2, $settings->replicaConfig()['driver_options'][PDO::ATTR_TIMEOUT]);
+        $this->assertSame(5, $settings->readTimeout());
+        $this->assertSame(
+            ['session', 'quote*', 'quote_id_mask', 'sales_order*'],
+            $settings->primaryOnlyTables()
+        );
+    }
+
+    public function testAPositionLifetimeShorterThanMaxLagIsRaisedToIt(): void
+    {
+        $settings = $this->read(['position_lifetime' => 10, 'max_lag' => 30]);
+
+        $this->assertSame(30, $settings->positionLifetime());
+        $this->assertTrue($settings->positionLifetimeWasRaised());
+    }
+
+    public function testAPositionLifetimeAtOrAboveMaxLagIsKept(): void
+    {
+        $this->assertSame(30, $this->read(['position_lifetime' => 30, 'max_lag' => 30])->positionLifetime());
+        $this->assertSame(45, $this->read(['position_lifetime' => 45, 'max_lag' => 30])->positionLifetime());
+        $this->assertFalse($this->read(['position_lifetime' => 45, 'max_lag' => 30])->positionLifetimeWasRaised());
+    }
+
+    public function testALongMaxLagRaisesThePositionPastItsUsualCeiling(): void
+    {
+        $this->assertSame(600, $this->read(['max_lag' => 600])->positionLifetime());
+        $this->assertSame(300, $this->read(['max_lag' => 5, 'position_lifetime' => 9000])->positionLifetime());
     }
 
     public function testOnlyTheBooleanTrueMakesItPooled(): void
     {
-        $block = ['replica' => ['host' => 'db-replica.example']];
-
-        $this->assertTrue($this->reader()->read($this->primary($block + ['pooled' => true]))->isPooled());
-        $this->assertFalse($this->reader()->read($this->primary($block + ['pooled' => 'yes']))->isPooled());
+        $this->assertTrue($this->read(['pooled' => true])->isPooled());
+        $this->assertFalse($this->read(['pooled' => 'yes'])->isPooled());
     }
 
-    public function testConfiguredTablesAreAddedToSessionWithThePrefixAndBadNamesAreDropped(): void
+    public function testConfiguredTablesAndPatternsAreAddedToTheDefaultsWithThePrefix(): void
     {
-        $settings = $this->reader('invented_')->read($this->primary([
-            'replica' => ['host' => 'db-replica.example'],
-            'primary_only_tables' => ['quote_id_mask', 'Session', 'bad name; --', 7],
-        ]));
+        $settings = $this->read(
+            ['primary_only_tables' => ['invented_log', 'invented_audit*', 'Session', 'bad name; --', 'x*y', 7]],
+            'pfx_'
+        );
 
-        $this->assertSame(['invented_session', 'invented_quote_id_mask'], $settings->primaryOnlyTables());
+        $this->assertSame(
+            [
+                'pfx_session',
+                'pfx_quote*',
+                'pfx_quote_id_mask',
+                'pfx_sales_order*',
+                'pfx_invented_log',
+                'pfx_invented_audit*',
+            ],
+            $settings->primaryOnlyTables()
+        );
     }
 
     public function testNumbersAreKeptWithinTheirBounds(): void
     {
-        $block = ['replica' => ['host' => 'db-replica.example']];
-
-        $read = fn (array $extra) => $this->reader()->read($this->primary($block + $extra));
-
-        $this->assertSame(300, $read(['position_lifetime' => 9000])->positionLifetime());
-        $this->assertSame(1, $read(['position_lifetime' => '0'])->positionLifetime());
-        $this->assertSame(10, $read(['position_lifetime' => 'soon'])->positionLifetime());
-        $this->assertSame(5, $read(['max_lag' => 5])->maxLag());
-        $this->assertSame(1, $read(['max_lag' => 0])->maxLag());
-        $this->assertSame(86400, $read(['max_lag' => 999999])->maxLag());
-        $this->assertSame(30, $read(['connect_timeout' => 99])->replicaConfig()['driver_options'][PDO::ATTR_TIMEOUT]);
+        $this->assertSame(5, $this->read(['max_lag' => 5])->maxLag());
+        $this->assertSame(1, $this->read(['max_lag' => 0])->maxLag());
+        $this->assertSame(86400, $this->read(['max_lag' => 999999])->maxLag());
+        $this->assertSame(30, $this->read(['max_lag' => 'soon'])->maxLag());
+        $this->assertSame(1, $this->read(['read_timeout' => 0])->readTimeout());
+        $this->assertSame(60, $this->read(['read_timeout' => 600])->readTimeout());
+        $options = $this->read(['connect_timeout' => 99])->replicaConfig()['driver_options'];
+        $this->assertSame(30, $options[PDO::ATTR_TIMEOUT]);
     }
 
     public function testTheReplicaKeepsATimeoutTheStoreAlreadySet(): void
     {
-        $config = $this->primary(['replica' => ['host' => 'db-replica.example']]);
-        $config['driver_options'] = [PDO::ATTR_TIMEOUT => 7, PDO::ATTR_PERSISTENT => false];
+        $driverOptions = [PDO::ATTR_TIMEOUT => 7, PDO::ATTR_PERSISTENT => false];
+        $connection = self::DEFAULT_CONNECTION + ['driver_options' => $driverOptions];
+        $reader = $this->reader(['replica' => ['host' => 'db-replica.example']], $connection);
 
-        $options = $this->reader()->read($config)->replicaConfig()['driver_options'];
+        $options = $reader->read($connection)->replicaConfig()['driver_options'];
 
         $this->assertSame([PDO::ATTR_TIMEOUT => 7, PDO::ATTR_PERSISTENT => false], $options);
     }
 
-    public function testTheReplicaTakesOnlyHostAndCredentialsFromItsBlock(): void
+    public function testTheReplicaTakesOnlyHostAndCredentialsFromTheBlock(): void
     {
-        $config = $this->primary(['replica' => [
+        $connection = self::DEFAULT_CONNECTION + ['initStatements' => 'SET NAMES utf8mb4'];
+        $reader = $this->reader(['replica' => [
             'host' => 'db-replica.example',
             'dbname' => 'invented_copy',
             'password' => 'invented-reader-password',
             'initStatements' => 'SET NAMES latin1',
-        ]]);
-        $config['initStatements'] = 'SET NAMES utf8mb4';
+        ]], $connection);
 
-        $replica = $this->reader()->read($config)->replicaConfig();
+        $replica = $reader->read($connection)->replicaConfig();
 
         $this->assertSame('db-replica.example', $replica['host']);
         $this->assertSame('invented_copy', $replica['dbname']);
         $this->assertSame('invented_user', $replica['username']);
         $this->assertSame('invented-reader-password', $replica['password']);
         $this->assertSame('SET NAMES utf8mb4', $replica['initStatements'], 'Connection setup matches the primary');
-        $this->assertArrayNotHasKey('read_split', $replica);
-    }
-
-    public function testTheCoreAdapterIsGivenTheConfigWithoutTheBlock(): void
-    {
-        $config = $this->primary(['replica' => ['host' => 'db-replica.example']]);
-
-        $this->assertSame($this->primary(), $this->reader()->withoutSettings($config));
-    }
-
-    private function reader(string $tablePrefix = ''): SettingsReader
-    {
-        $deploymentConfig = $this->createStub(DeploymentConfig::class);
-        $deploymentConfig->method('get')->willReturn($tablePrefix);
-
-        return new SettingsReader($deploymentConfig);
+        $this->assertSame(['driver_options'], array_keys(array_filter($replica, 'is_array')), 'No array reaches a DSN');
     }
 
     /**
-     * @param array<string, mixed>|null $block
-     * @return array<string, mixed>
+     * @param array<string, mixed> $block
      */
-    private function primary(?array $block = null): array
+    private function read(array $block, string $tablePrefix = ''): Settings
     {
-        $config = [
-            'host' => 'db-primary.example',
-            'dbname' => 'invented_store',
-            'username' => 'invented_user',
-            'password' => 'invented-password',
-            'active' => '1',
-        ];
+        return $this->reader($block + ['replica' => ['host' => 'db-replica.example']], null, $tablePrefix)
+            ->read(self::DEFAULT_CONNECTION);
+    }
 
-        if ($block !== null) {
-            $config['read_split'] = $block;
+    /**
+     * @param array<string, mixed>|null $default the default connection as env.php holds it
+     */
+    private function reader(mixed $block, ?array $connection = null, string $tablePrefix = ''): SettingsReader
+    {
+        $connections = ['default' => $connection ?? self::DEFAULT_CONNECTION];
+
+        if (($block['connection'] ?? null) === 'checkout') {
+            $connections = ['default' => self::DEFAULT_CONNECTION, 'checkout' => $connection];
         }
 
-        return $config;
+        $deploymentConfig = $this->createStub(DeploymentConfig::class);
+        $deploymentConfig->method('get')->willReturnCallback(
+            static fn (string $path): mixed => match (true) {
+                $path === 'db/read_split' => $block,
+                $path === 'db/table_prefix' => $tablePrefix,
+                str_starts_with($path, 'db/connection/') => $connections[substr($path, 14)] ?? null,
+                default => null,
+            }
+        );
+
+        return new SettingsReader($deploymentConfig);
     }
 }

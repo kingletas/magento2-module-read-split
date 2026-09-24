@@ -102,6 +102,20 @@ class ReplicaBreakerRoutingTest extends SplitAdapterTestCase
         $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM store'));
     }
 
+    /**
+     * A stalled replica shows as a read that times out, which drops the connection with error 2006.
+     */
+    public function testAReadThatTimesOutOnTheReplicaTripsItAndThePrimaryAnswers(): void
+    {
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->once())->method('warning');
+        $this->replica->failOn = '/catalog_product_entity/';
+
+        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity'));
+        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM store'));
+        $this->assertSame(1, $this->replica->connects);
+    }
+
     public function testAFailedReplayTripsIt(): void
     {
         $this->replica->failOn = '/^SET NAMES/';
@@ -118,7 +132,7 @@ class ReplicaBreakerRoutingTest extends SplitAdapterTestCase
     {
         $this->replica->failGtidCheck = true;
         $this->arriveWithPosition('0-1-512');
-        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM quote'));
+        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity'));
 
         $this->cookies->incoming = [];
 
@@ -130,7 +144,7 @@ class ReplicaBreakerRoutingTest extends SplitAdapterTestCase
     {
         $this->replica->caughtUp['replica'] = false;
         $this->arriveWithPosition('0-1-512');
-        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM quote'));
+        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity'));
 
         $this->cookies->incoming = [];
 

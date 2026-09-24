@@ -9,8 +9,8 @@ declare(strict_types=1);
 
 namespace Kingletas\ReadSplit\Model\Response;
 
-use Magento\Framework\App\Request\Http as HttpRequest;
-use Magento\Framework\App\Response\Http as HttpResponse;
+use Magento\Framework\HTTP\PhpEnvironment\Request as HttpRequest;
+use Magento\Framework\HTTP\PhpEnvironment\Response as HttpResponse;
 
 /**
  * Decides whether a response could be stored by a full-page cache, and so must never gain a cookie.

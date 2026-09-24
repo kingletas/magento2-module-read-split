@@ -31,14 +31,14 @@ class CarryWritePositionTest extends SplitAdapterTestCase
     public function testARequestThatWroteAndIsNotCacheableCarriesThePrimarysPosition(): void
     {
         $this->primary->position = '0-1-2048';
-        $adapter = $this->adapter(['position_lifetime' => 15]);
+        $adapter = $this->adapter(['position_lifetime' => 45]);
         $adapter->insert('quote_id_mask', ['quote_id' => 3]);
 
         $this->observer($adapter)->execute($this->event('GET', 'no-store, no-cache, must-revalidate, max-age=0'));
-        $this->assertSame(15, $this->cookies->set[self::NAME]['metadata']['duration']);
+        $this->assertSame(45, $this->cookies->set[self::NAME]['metadata']['duration']);
         $this->cookies->nextRequest();
 
-        $pending = $this->positionCookie()->read(15);
+        $pending = $this->positionCookie()->read(45);
         $this->assertSame(PositionState::Pending, $pending->state());
         $this->assertSame('0-1-2048', $pending->position());
     }
@@ -67,7 +67,7 @@ class CarryWritePositionTest extends SplitAdapterTestCase
     public function testARequestThatDidNotWriteCarriesNothing(): void
     {
         $adapter = $this->adapter();
-        $this->answeredBy($adapter, 'SELECT * FROM quote');
+        $this->answeredBy($adapter, 'SELECT * FROM catalog_product_entity');
         $adapter->query("SET time_zone = '+00:00'");
 
         $this->observer($adapter)->execute($this->event('POST', 'no-store'));

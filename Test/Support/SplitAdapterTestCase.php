@@ -162,13 +162,14 @@ abstract class SplitAdapterTestCase extends TestCase
     }
 
     /**
-     * A connection whose env.php block is the given one, with an invented replica host unless it names another.
+     * The default connection of a store whose env.php db/read_split block is the given one, with an invented replica
+     * host unless it names another.
      *
      * @param array<string, mixed> $readSplit
      */
     protected function adapter(array $readSplit = [], string $tablePrefix = ''): ReadSplitMysql
     {
-        $deploymentConfig = $this->deploymentConfig($tablePrefix);
+        $deploymentConfig = $this->deploymentConfig($tablePrefix, $this->readSplitBlock($readSplit));
         $routerFactory = new RouterFactory(
             $this->classifier,
             $this->scope,
@@ -186,7 +187,7 @@ abstract class SplitAdapterTestCase extends TestCase
             new SelectFactory(new SelectRenderer([])),
             new SettingsReader($deploymentConfig),
             $routerFactory,
-            $this->connectionConfig($readSplit),
+            $this->connectionConfig(),
             $this->createStub(SerializerInterface::class),
             $this->createStub(DtoFactoriesTable::class)
         );
@@ -197,18 +198,27 @@ abstract class SplitAdapterTestCase extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $readSplit
+     * The default connection as env.php holds it, which carries nothing of this module's.
+     *
      * @return array<string, mixed>
      */
-    protected function connectionConfig(array $readSplit = []): array
+    protected function connectionConfig(): array
     {
         return [
             'host' => 'db-primary.example',
             'dbname' => 'invented_store',
             'username' => 'invented_user',
             'password' => 'invented-password',
-            'read_split' => $readSplit + ['replica' => ['host' => 'db-replica.example']],
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $readSplit
+     * @return array<string, mixed>
+     */
+    protected function readSplitBlock(array $readSplit = []): array
+    {
+        return $readSplit + ['replica' => ['host' => 'db-replica.example']];
     }
 
     protected function positionCookie(?DeploymentConfig $deploymentConfig = null): PositionCookie
@@ -232,13 +242,21 @@ abstract class SplitAdapterTestCase extends TestCase
         return new Encryptor(new Random(), $deploymentConfig, new KeyValidator());
     }
 
-    protected function deploymentConfig(string $tablePrefix = ''): DeploymentConfig
+    /**
+     * env.php as Magento reads it: the store key, the table prefix, the connections and the db/read_split block.
+     *
+     * @param array<string, mixed>|null $readSplit
+     */
+    protected function deploymentConfig(string $tablePrefix = '', ?array $readSplit = null): DeploymentConfig
     {
+        $connection = $this->connectionConfig();
         $deploymentConfig = $this->createStub(DeploymentConfig::class);
         $deploymentConfig->method('get')->willReturnCallback(
-            static fn (string $path): ?string => match ($path) {
+            static fn (string $path): mixed => match ($path) {
                 'crypt/key' => self::STORE_KEY,
                 'db/table_prefix' => $tablePrefix,
+                'db/connection/default' => $connection,
+                'db/read_split' => $readSplit,
                 default => null,
             }
         );
@@ -252,7 +270,7 @@ abstract class SplitAdapterTestCase extends TestCase
     protected function arriveWithPosition(string $position, int $secondsAgo = 1): void
     {
         $this->clock->advance(-$secondsAgo);
-        $this->positionCookie()->write($position, 10);
+        $this->positionCookie()->write($position, 30);
         $this->clock->advance($secondsAgo);
         $this->cookies->nextRequest();
     }
