@@ -1,0 +1,19 @@
+# Static analysis needs the Magento classes on the autoloader, so this is only
+# runnable where `composer install` has resolved magento/framework. The CI job
+# that runs it is gated on those credentials being present rather than being
+# allowed to pass vacuously.
+parameters:
+    level: 6
+    phpVersion:
+        min: 80300
+        max: 80499
+    # Registers the on-demand generator, so a Proxy that only exists
+    # after `setup:di:compile` resolves here too.
+    bootstrapFiles:
+        - Test/generated-classes.php
+    paths:
+        - Model
+        - Observer
+    excludePaths:
+        - Test/*
+    treatPhpDocTypesAsCertain: false

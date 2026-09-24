@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="urn:magento:framework:ObjectManager/etc/config.xsd">
+    <!-- Builds every connection; it names this module's adapter only for a connection whose env.php config asks for it. -->
+    <preference for="Magento\Framework\App\ResourceConnection\ConnectionAdapterInterface"
+                type="Kingletas\ReadSplit\Model\ConnectionType"/>
+
+    <preference for="Kingletas\ReadSplit\Model\Request\RequestScopeInterface"
+                type="Kingletas\ReadSplit\Model\Request\RequestScope"/>
+    <preference for="Kingletas\ReadSplit\Model\Replica\ReplicaConnectorInterface"
+                type="Kingletas\ReadSplit\Model\Replica\PdoReplicaConnector"/>
+
+    <!-- The request is read only when a statement may go to the replica, long after it exists. -->
+    <type name="Kingletas\ReadSplit\Model\Request\RequestScope">
+        <arguments>
+            <argument name="request" xsi:type="object">Magento\Framework\App\Request\Http\Proxy</argument>
+        </arguments>
+    </type>
+
+    <!-- The cookie name is wiring, so a rebrand renames it with everything else. -->
+    <type name="Kingletas\ReadSplit\Model\Gtid\PositionCookie">
+        <arguments>
+            <argument name="cookieName" xsi:type="string">kingletas_read_split</argument>
+            <argument name="cookieManager" xsi:type="object">Magento\Framework\Stdlib\CookieManagerInterface\Proxy</argument>
+            <argument name="encryptor" xsi:type="object">Magento\Framework\Encryption\EncryptorInterface\Proxy</argument>
+        </arguments>
+    </type>
+
+    <!-- Built with every split connection, so nothing it needs may reach the database while it is being built. -->
+    <type name="Kingletas\ReadSplit\Model\Routing\RouterFactory">
+        <arguments>
+            <argument name="positionCookie" xsi:type="object">Kingletas\ReadSplit\Model\Gtid\PositionCookie\Proxy</argument>
+        </arguments>
+    </type>
+</config>

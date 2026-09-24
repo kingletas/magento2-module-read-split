@@ -1,0 +1,68 @@
+<?xml version="1.0"?>
+<ruleset name="Kingletas_ReadSplit"
+         xmlns="http://pmd.sf.net/ruleset/1.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sf.net/ruleset/1.0.0 http://pmd.sf.net/ruleset_xml_schema.xsd">
+    <description>
+        Complexity and coupling limits. The thresholds are the defaults; the
+        point of running this at all is that a class quietly growing a second
+        responsibility shows up as a number rather than as a review comment
+        somebody may or may not make.
+    </description>
+
+    <rule ref="rulesets/cleancode.xml">
+        <!--
+            Magento's DI container is the composition root; `new` inside a
+            value object's constructor is not the smell this rule is looking
+            for.
+        -->
+        <exclude name="StaticAccess"/>
+        <exclude name="BooleanArgumentFlag"/>
+    </rule>
+    <rule ref="rulesets/codesize.xml">
+        <exclude name="ExcessiveParameterList"/>
+    </rule>
+    <rule ref="rulesets/design.xml">
+        <exclude name="CouplingBetweenObjects"/>
+    </rule>
+    <rule ref="rulesets/naming.xml">
+        <exclude name="ShortVariable"/>
+        <exclude name="LongVariable"/>
+        <!-- Magento's own convention for a resource model initialiser. -->
+        <exclude name="ShortMethodName"/>
+    </rule>
+    <rule ref="rulesets/unusedcode.xml"/>
+    <!-- Thresholds and exceptions, each with its reason. -->
+
+    <!--
+        `$id`, `$a`, `$b`, `$pk` and `$ms` are the domain's own words; every
+        other short name was renamed.
+    -->
+    <rule ref="rulesets/naming.xml/ShortVariable">
+        <properties>
+            <property name="exceptions" value="id,a,b,pk,ms"/>
+        </properties>
+    </rule>
+
+    <!--
+        A dependency is named after the service it carries, so the name matches
+        its `di.xml` argument.
+    -->
+    <rule ref="rulesets/naming.xml/LongVariable">
+        <properties>
+            <property name="maximum" value="25"/>
+        </properties>
+    </rule>
+
+    <!-- These two count constructor injection. -->
+    <rule ref="rulesets/codesize.xml/ExcessiveParameterList">
+        <properties>
+            <property name="minimum" value="20"/>
+        </properties>
+    </rule>
+    <rule ref="rulesets/design.xml/CouplingBetweenObjects">
+        <properties>
+            <property name="maximum" value="20"/>
+        </properties>
+    </rule>
+</ruleset>

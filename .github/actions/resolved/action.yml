@@ -1,0 +1,23 @@
+# Writes the toolchain versions the calling job resolved to its step summary.
+#
+# Three jobs here resolve independently of each other - the coding standard on
+# its own, the module's own dev dependencies, and those plus the analysers - so
+# each has a different answer and each is asked separately. They do not all
+# resolve into the same place, so the directory to read is an input.
+#
+# Reported, never enforced. A failure is discarded here, so a version line that
+# could not be read is a report that did not arrive rather than a red run.
+name: Resolved versions
+description: Write the toolchain versions this job resolved to the step summary.
+
+inputs:
+  vendor:
+    description: The directory holding the resolved packages, relative to the workspace.
+    required: false
+    default: vendor
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: php "${GITHUB_ACTION_PATH}/resolved.php" "${{ inputs.vendor }}" >> "${GITHUB_STEP_SUMMARY}" || true

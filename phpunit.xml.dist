@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<!-- Four suites, and they need one thing: a Magento autoloader. -->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/10.5/phpunit.xsd"
+         bootstrap="Test/bootstrap.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         failOnWarning="true"
+         failOnNotice="true"
+         failOnRisky="true"
+         beStrictAboutOutputDuringTests="true"
+         displayDetailsOnTestsThatTriggerWarnings="true">
+    <testsuites>
+        <testsuite name="unit">
+            <directory suffix="Test.php">Test/Unit</directory>
+        </testsuite>
+
+        <!-- The XML in etc/ against the code it names. -->
+        <testsuite name="wiring">
+            <directory suffix="Test.php">Test/Wiring</directory>
+        </testsuite>
+
+        <!-- One visitor's requests in a row, through the real classes. -->
+        <testsuite name="behaviour">
+            <directory suffix="Test.php">Test/Behaviour</directory>
+        </testsuite>
+
+        <!-- What a request costs the replica, counted rather than timed. -->
+        <testsuite name="performance">
+            <directory suffix="Test.php">Test/Performance</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory suffix=".php">Model</directory>
+            <directory suffix=".php">Observer</directory>
+        </include>
+    </source>
+</phpunit>

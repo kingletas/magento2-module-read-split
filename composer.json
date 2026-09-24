@@ -1,0 +1,67 @@
+{
+    "name": "kingletas/module-read-split",
+    "description": "Sends a Mage-OS storefront's plain reads to a database replica, one statement at a time, and keeps every write, and every read that must see one, on the primary.",
+    "type": "magento2-module",
+    "license": "OSL-3.0",
+    "repositories": [
+        {
+            "type": "composer",
+            "url": "https://repo.magento.com/"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "magento/framework": ">=103.0"
+    },
+    "require-dev": {
+        "magento/magento-coding-standard": ">=38 <42",
+        "phpcompatibility/php-compatibility": "^9.3",
+        "phpmd/phpmd": "^2.15",
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^10.5",
+        "slevomat/coding-standard": "^8.15"
+    },
+    "autoload": {
+        "files": [
+            "registration.php"
+        ],
+        "psr-4": {
+            "Kingletas\\ReadSplit\\": ""
+        },
+        "exclude-from-classmap": [
+            "/Test/"
+        ]
+    },
+    "config": {
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true,
+            "laminas/laminas-dependency-plugin": true,
+            "magento/*": true,
+            "php-http/discovery": true
+        },
+        "sort-packages": true
+    },
+    "scripts": {
+        "lint": "find . -path ./vendor -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null",
+        "cs": "phpcs --standard=phpcs.xml.dist",
+        "cs-fix": "phpcbf --standard=phpcs.xml.dist",
+        "stan": "phpstan analyse --configuration phpstan.neon.dist --no-progress",
+        "md": "phpmd Model,Observer text phpmd.xml.dist",
+        "test": "phpunit --configuration phpunit.xml.dist",
+        "test-behaviour": "phpunit --configuration phpunit.xml.dist --testsuite behaviour",
+        "test-performance": "phpunit --configuration phpunit.xml.dist --testsuite performance",
+        "test-wiring": "phpunit --configuration phpunit.xml.dist --testsuite wiring",
+        "test-unit": "phpunit --configuration phpunit.xml.dist --testsuite unit",
+        "check": [
+            "@lint",
+            "@cs",
+            "@stan",
+            "@md",
+            "@test"
+        ]
+    },
+    "scripts-descriptions": {
+        "check": "Everything the CI pull-request gate runs.",
+        "test": "Every suite this module ships. Needs M2_VENDOR pointing at a Magento installation's vendor directory."
+    }
+}

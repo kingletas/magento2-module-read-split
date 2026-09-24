@@ -1,0 +1,92 @@
+<?xml version="1.0"?>
+<ruleset name="Kingletas_ReadSplit">
+    <description>
+        Magento's own coding standard, plus a floor on the PHP version the
+        manifest claims to support: 8.3, because the code uses typed class
+        constants. PHPCompatibility predates PHP 8.1, so the CI syntax check on
+        8.3 and 8.4 is what enforces the floor.
+    </description>
+
+    <file>Model</file>
+    <file>Observer</file>
+    <file>Test</file>
+    <file>registration.php</file>
+
+    <!-- Neither is ours to lint: composer writes one, the code generator the other. -->
+    <exclude-pattern>vendor/*</exclude-pattern>
+    <exclude-pattern>var/*</exclude-pattern>
+    <!-- CI configuration rather than module code: `php -l` lints it, and
+         the Magento standard has nothing to say about a script that never
+         runs inside a store. -->
+    <exclude-pattern>.github/*</exclude-pattern>
+
+    <arg name="extensions" value="php"/>
+    <arg name="colors"/>
+    <arg value="sp"/>
+
+    <rule ref="Magento2"/>
+
+    <!-- Every file declares strict types; the Magento CI enforces the same rule. -->
+    <rule ref="Generic.PHP.RequireStrictTypes"/>
+
+    <rule ref="PHPCompatibility">
+        <include-pattern>*\.php$</include-pattern>
+    </rule>
+    <config name="testVersion" value="8.3-"/>
+
+    <!-- Exclusions, each with its reason. -->
+
+    <!--
+        A test class is not an extension point: PHPUnit instantiates it
+        directly, nothing subclasses it, and `final` says so.
+    -->
+    <rule ref="Magento2.PHP.FinalImplementation">
+        <exclude-pattern>Test/*</exclude-pattern>
+    </rule>
+
+    <!-- PHPUnit requires data providers to be static. -->
+    <rule ref="Magento2.Functions.StaticFunction">
+        <exclude-pattern>Test/*</exclude-pattern>
+    </rule>
+
+    <!-- A test double's no-op body is the behaviour under test. -->
+    <rule ref="Magento2.CodeAnalysis.EmptyBlock">
+        <exclude-pattern>Test/*</exclude-pattern>
+    </rule>
+
+    <!--
+        The test bootstraps run before any framework exists and can only return
+        a code to the process.
+    -->
+    <rule ref="Magento2.Security.LanguageConstruct">
+        <exclude-pattern>Test/bootstrap.php</exclude-pattern>
+        <exclude-pattern>Test/generated-classes.php</exclude-pattern>
+    </rule>
+    <!-- Type hints on test doubles. -->
+    <rule ref="SlevomatCodingStandard.TypeHints.ParameterTypeHint">
+        <exclude-pattern>Test/*</exclude-pattern>
+    </rule>
+    <rule ref="SlevomatCodingStandard.TypeHints.ReturnTypeHint">
+        <exclude-pattern>Test/*</exclude-pattern>
+    </rule>
+    <rule ref="SlevomatCodingStandard.TypeHints.PropertyTypeHint">
+        <exclude-pattern>Test/*</exclude-pattern>
+    </rule>
+
+    <!--
+        A docblock that only restates a native signature carries no
+        information, so none is required.
+    -->
+    <rule ref="Magento2.Annotation.MethodAnnotationStructure">
+        <severity>0</severity>
+    </rule>
+
+    <!-- Docblocks that only restate a native signature. -->
+    <rule ref="Magento2.Annotation.MethodArguments">
+        <severity>0</severity>
+    </rule>
+    <rule ref="Magento2.Commenting.ClassPropertyPHPDocFormatting">
+        <severity>0</severity>
+    </rule>
+
+</ruleset>

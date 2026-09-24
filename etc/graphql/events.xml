@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="urn:magento:framework:Event/etc/events.xsd">
+    <!-- The last point at which a cookie can still be set, after the response's cache headers are final. -->
+    <event name="controller_front_send_response_before">
+        <observer name="kingletas_read_split_carry_write_position"
+                  instance="Kingletas\ReadSplit\Observer\CarryWritePosition"/>
+    </event>
+</config>
