@@ -23,7 +23,8 @@ class Settings
         private readonly array $replicaConfig = [],
         private readonly bool $pooled = false,
         private readonly array $primaryOnlyTables = [],
-        private readonly int $positionLifetime = 10
+        private readonly int $positionLifetime = 10,
+        private readonly int $maxLag = 30
     ) {
     }
 
@@ -57,6 +58,14 @@ class Settings
     public function primaryOnlyTables(): array
     {
         return $this->primaryOnlyTables;
+    }
+
+    /**
+     * Seconds the replica may be behind before it is taken out of use.
+     */
+    public function maxLag(): int
+    {
+        return $this->maxLag;
     }
 
     /**

@@ -180,6 +180,10 @@ class ReadSplitMysql extends Mysql
 
         $result = $this->onPrimary($sql, $bind);
 
+        if ($route === Route::Replica) {
+            $this->router->primaryAnsweredWhatTheReplicaFailed();
+        }
+
         if ($route === Route::PrimaryAndReplica) {
             $this->router->rememberSessionState($sql, $bind);
         }

@@ -26,6 +26,13 @@
         </arguments>
     </type>
 
+    <!-- The marker names are wiring, so a rebrand renames them with everything else. -->
+    <type name="Kingletas\ReadSplit\Model\Replica\Breaker">
+        <arguments>
+            <argument name="markerName" xsi:type="string">kingletas_read_split</argument>
+        </arguments>
+    </type>
+
     <!-- Built with every split connection, so nothing it needs may reach the database while it is being built. -->
     <type name="Kingletas\ReadSplit\Model\Routing\RouterFactory">
         <arguments>

@@ -9,11 +9,12 @@ declare(strict_types=1);
 
 namespace Kingletas\ReadSplit\Model\Routing;
 
+use Kingletas\ReadSplit\Model\Replica\Breaker;
 use Kingletas\ReadSplit\Model\Replica\ReplicaConnectionInterface;
 use Kingletas\ReadSplit\Model\Replica\ReplicaConnectorInterface;
+use Kingletas\ReadSplit\Model\Replica\ReplicationStatus;
 use Magento\Framework\DB\LoggerInterface as DbLogger;
 use Magento\Framework\DB\SelectFactory;
-use Psr\Log\LoggerInterface;
 use Throwable;
 
 /**
@@ -25,6 +26,13 @@ class Replica
 
     private bool $available = true;
 
+    private ?bool $breakerAllows = null;
+
+    /**
+     * Set when a statement failed here, until the primary shows whether the statement or the replica was at fault.
+     */
+    private bool $unconfirmedFailure = false;
+
     /**
      * @var array<int, array{0: string, 1: mixed}>
      */
@@ -35,18 +43,25 @@ class Replica
      */
     public function __construct(
         private readonly array $config,
+        private readonly int $maxLag,
         private readonly ReplicaConnectorInterface $connector,
+        private readonly Breaker $breaker,
+        private readonly ReplicationStatus $replicationStatus,
         private readonly DbLogger $dbLogger,
-        private readonly SelectFactory $selectFactory,
-        private readonly LoggerInterface $logger
+        private readonly SelectFactory $selectFactory
     ) {
     }
 
     /**
-     * False once the replica failed or was behind for this request, which sends the rest of it to the primary.
+     * False once the replica failed or was behind for this request, or while the node's breaker is open.
      */
     public function isAvailable(): bool
     {
+        if ($this->available && $this->breakerAllows === null) {
+            $this->breakerAllows = $this->breaker->allowsAttempt();
+            $this->available = $this->breakerAllows;
+        }
+
         return $this->available;
     }
 
@@ -62,20 +77,39 @@ class Replica
      */
     public function query(string $sql, mixed $bind, string $position): mixed
     {
-        if (!$this->available) {
+        if (!$this->isAvailable()) {
             return null;
         }
 
-        $stage = $this->connection === null ? 'open' : 'query';
+        if ($this->connection === null) {
+            try {
+                $this->open($position);
+            } catch (Throwable $failure) {
+                $this->giveUp('opening it failed (' . $this->describe($failure) . ')');
+
+                return null;
+            }
+        }
 
         try {
-            $connection = $this->connection ?? $this->open($position);
-
-            return $connection?->query($sql, $bind);
-        } catch (Throwable $e) {
-            $this->giveUp($e, $stage);
+            return $this->connection?->query($sql, $bind);
+        } catch (Throwable) {
+            $this->close();
+            $this->available = false;
+            $this->unconfirmedFailure = true;
 
             return null;
+        }
+    }
+
+    /**
+     * The primary answered what the replica failed, so the replica was at fault and the breaker opens.
+     */
+    public function confirmFailure(): void
+    {
+        if ($this->unconfirmedFailure) {
+            $this->unconfirmedFailure = false;
+            $this->breaker->trip('it failed a statement the primary answered');
         }
     }
 
@@ -92,8 +126,8 @@ class Replica
 
         try {
             $this->connection->query($sql, $bind);
-        } catch (Throwable $e) {
-            $this->giveUp($e, 'session state');
+        } catch (Throwable $failure) {
+            $this->giveUp('it failed a session SET (' . $this->describe($failure) . ')');
         }
     }
 
@@ -111,35 +145,52 @@ class Replica
     {
         $this->close();
         $this->available = true;
+        $this->breakerAllows = null;
+        $this->unconfirmedFailure = false;
         $this->sessionState = [];
     }
 
-    private function open(string $position): ?ReplicaConnectionInterface
+    /**
+     * Connects, checks replication when due, checks the visitor's position, replays session state, and records success.
+     */
+    private function open(string $position): void
     {
-        $connection = $this->connector->connect($this->config, $this->dbLogger, $this->selectFactory);
-        $this->connection = $connection;
+        $this->connection = $this->connector->connect($this->config, $this->dbLogger, $this->selectFactory);
 
-        if ($position !== '' && !$connection->hasReached($position)) {
+        if ($this->breaker->isProbing() || $this->breaker->claimHealthCheck()) {
+            $problem = $this->replicationStatus->problem($this->connection->replicationStatus(), $this->maxLag);
+
+            if ($problem !== null) {
+                $this->giveUp($problem);
+
+                return;
+            }
+        }
+
+        if ($position !== '' && !$this->connection->hasReached($position)) {
+            $this->breaker->recordSuccess();
             $this->close();
             $this->available = false;
 
-            return null;
+            return;
         }
 
         foreach ($this->sessionState as [$sql, $bind]) {
-            $connection->query($sql, $bind);
+            $this->connection->query($sql, $bind);
         }
 
-        return $connection;
+        $this->breaker->recordSuccess();
     }
 
-    private function giveUp(Throwable $failure, string $stage): void
+    private function giveUp(string $reason): void
     {
         $this->close();
         $this->available = false;
-        $this->logger->warning(
-            'Read split: the replica failed at ' . $stage . ', so this request reads from the primary.',
-            ['exception_class' => get_class($failure), 'code' => $failure->getCode()]
-        );
+        $this->breaker->trip($reason);
+    }
+
+    private function describe(Throwable $failure): string
+    {
+        return get_class($failure) . ' ' . $failure->getCode();
     }
 }

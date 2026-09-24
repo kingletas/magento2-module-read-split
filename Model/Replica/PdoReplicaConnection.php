@@ -38,6 +38,16 @@ class PdoReplicaConnection implements ReplicaConnectionInterface
     }
 
     /**
+     * @inheritDoc
+     */
+    public function replicationStatus(): array
+    {
+        $row = $this->adapter->fetchRow('SHOW REPLICA STATUS');
+
+        return is_array($row) ? $row : [];
+    }
+
+    /**
      * A timeout of zero makes the wait answer at once: 0 when the replica has caught up, -1 when it has not.
      */
     public function hasReached(string $position): bool

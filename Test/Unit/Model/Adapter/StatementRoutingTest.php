@@ -59,9 +59,6 @@ class StatementRoutingTest extends SplitAdapterTestCase
             'INTO a variable' => ['SELECT MAX(entity_id) INTO @invented_max FROM quote'],
             'a variable assigned in a select' => ['SELECT @invented_row := entity_id FROM quote'],
             'a server variable' => ['SELECT @@version'],
-            'SHOW' => ["SHOW TABLE STATUS LIKE 'quote'"],
-            'DESCRIBE' => ['DESCRIBE `quote`'],
-            'EXPLAIN' => ['EXPLAIN SELECT * FROM quote'],
         ];
     }
 
@@ -74,6 +71,43 @@ class StatementRoutingTest extends SplitAdapterTestCase
         $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM store'));
         $this->assertSame([], $this->replica->sql());
         $this->assertFalse($this->ledger->hasWritten(), 'A read that pins is not a write, so it carries no position');
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function metadataReads(): array
+    {
+        return [
+            'SHOW TABLE STATUS' => ["SHOW TABLE STATUS LIKE 'quote'"],
+            'SHOW CREATE TABLE' => ['SHOW CREATE TABLE `quote`'],
+            'DESCRIBE' => ['DESCRIBE `quote`'],
+            'DESC' => ['DESC `quote`'],
+            'EXPLAIN' => ['EXPLAIN SELECT * FROM quote'],
+        ];
+    }
+
+    /**
+     * After a deploy or a cache flush nearly every request describes tables, and pinning them would end the offload.
+     */
+    #[DataProvider('metadataReads')]
+    public function testAMetadataReadGoesToThePrimaryWithoutPinningTheRequest(string $sql): void
+    {
+        $adapter = $this->adapter();
+
+        $this->assertSame('primary', $this->answeredBy($adapter, $sql));
+        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM store'));
+        $this->assertSame(['SELECT * FROM store'], $this->replica->sql());
+        $this->assertFalse($this->ledger->hasWritten());
+    }
+
+    public function testAMetadataReadPreparedOutsideTheQueryPathDoesNotPinEither(): void
+    {
+        $adapter = $this->adapter();
+
+        $adapter->prepare('DESCRIBE `quote`')->execute();
+
+        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM store'));
     }
 
     /**

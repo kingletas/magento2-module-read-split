@@ -76,6 +76,7 @@ class SettingsReaderTest extends TestCase
         $this->assertFalse($settings->isPooled());
         $this->assertSame(['session'], $settings->primaryOnlyTables());
         $this->assertSame(10, $settings->positionLifetime());
+        $this->assertSame(30, $settings->maxLag());
         $this->assertSame(2, $settings->replicaConfig()['driver_options'][PDO::ATTR_TIMEOUT]);
     }
 
@@ -106,6 +107,9 @@ class SettingsReaderTest extends TestCase
         $this->assertSame(300, $read(['position_lifetime' => 9000])->positionLifetime());
         $this->assertSame(1, $read(['position_lifetime' => '0'])->positionLifetime());
         $this->assertSame(10, $read(['position_lifetime' => 'soon'])->positionLifetime());
+        $this->assertSame(5, $read(['max_lag' => 5])->maxLag());
+        $this->assertSame(1, $read(['max_lag' => 0])->maxLag());
+        $this->assertSame(86400, $read(['max_lag' => 999999])->maxLag());
         $this->assertSame(30, $read(['connect_timeout' => 99])->replicaConfig()['driver_options'][PDO::ATTR_TIMEOUT]);
     }
 

@@ -10,14 +10,15 @@ declare(strict_types=1);
 namespace Kingletas\ReadSplit\Model\Routing;
 
 use Kingletas\ReadSplit\Model\Gtid\PositionCookie;
+use Kingletas\ReadSplit\Model\Replica\Breaker;
 use Kingletas\ReadSplit\Model\Replica\ReplicaConnectorInterface;
+use Kingletas\ReadSplit\Model\Replica\ReplicationStatus;
 use Kingletas\ReadSplit\Model\Request\RequestScopeInterface;
 use Kingletas\ReadSplit\Model\Request\WriteLedger;
 use Kingletas\ReadSplit\Model\Settings;
 use Kingletas\ReadSplit\Model\Statement\Classifier;
 use Magento\Framework\DB\LoggerInterface as DbLogger;
 use Magento\Framework\DB\SelectFactory;
-use Psr\Log\LoggerInterface;
 
 /**
  * Gives each split connection a router and a replica of its own, sharing the services that hold no request state.
@@ -30,7 +31,8 @@ class RouterFactory
         private readonly PositionCookie $positionCookie,
         private readonly WriteLedger $writeLedger,
         private readonly ReplicaConnectorInterface $replicaConnector,
-        private readonly LoggerInterface $logger
+        private readonly Breaker $breaker,
+        private readonly ReplicationStatus $replicationStatus
     ) {
     }
 
@@ -38,10 +40,12 @@ class RouterFactory
     {
         $replica = new Replica(
             $settings->replicaConfig(),
+            $settings->maxLag(),
             $this->replicaConnector,
+            $this->breaker,
+            $this->replicationStatus,
             $dbLogger,
-            $selectFactory,
-            $this->logger
+            $selectFactory
         );
 
         return new Router(

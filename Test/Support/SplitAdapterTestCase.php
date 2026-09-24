@@ -12,6 +12,8 @@ namespace Kingletas\ReadSplit\Test\Support;
 use Kingletas\ReadSplit\Model\Adapter\ReadSplitMysql;
 use Kingletas\ReadSplit\Model\Gtid\GtidPosition;
 use Kingletas\ReadSplit\Model\Gtid\PositionCookie;
+use Kingletas\ReadSplit\Model\Replica\Breaker;
+use Kingletas\ReadSplit\Model\Replica\ReplicationStatus;
 use Kingletas\ReadSplit\Model\Request\WriteLedger;
 use Kingletas\ReadSplit\Model\Routing\RouterFactory;
 use Kingletas\ReadSplit\Model\SettingsReader;
@@ -19,11 +21,13 @@ use Kingletas\ReadSplit\Model\Statement\Classifier;
 use Kingletas\ReadSplit\Model\Statement\SessionStateSet;
 use Kingletas\ReadSplit\Model\Statement\SqlText;
 use Magento\Framework\App\DeploymentConfig;
+use Magento\Framework\App\Filesystem\DirectoryList;
 use Magento\Framework\DB\Logger\Quiet;
 use Magento\Framework\DB\Select\SelectRenderer;
 use Magento\Framework\DB\SelectFactory;
 use Magento\Framework\Encryption\Encryptor;
 use Magento\Framework\Encryption\KeyValidator;
+use Magento\Framework\Filesystem\Driver\File;
 use Magento\Framework\Math\Random;
 use Magento\Framework\Serialize\SerializerInterface;
 use Magento\Framework\Setup\Declaration\Schema\Dto\Factories\Table as DtoFactoriesTable;
@@ -63,8 +67,26 @@ abstract class SplitAdapterTestCase extends TestCase
 
     protected Classifier $classifier;
 
+    /**
+     * The file driver the breaker is given, left null for Magento's own.
+     */
+    protected ?File $fileDriver = null;
+
+    /**
+     * Magento's var/ directory for this test, where the breaker keeps its marker files.
+     */
+    protected string $varDir;
+
+    /**
+     * @var string[]
+     */
+    private array $varDirs = [];
+
     protected function setUp(): void
     {
+        $this->varDir = sys_get_temp_dir() . '/kingletas-read-split-test-' . bin2hex(random_bytes(6));
+        mkdir($this->varDir);
+        $this->varDirs[] = $this->varDir;
         $this->scope = new FixedScope();
         $this->clock = new MovableClock();
         $this->cookies = new CookieJar();
@@ -73,6 +95,29 @@ abstract class SplitAdapterTestCase extends TestCase
         $this->primary = new PrimaryPdo();
         $this->logger = $this->createStub(LoggerInterface::class);
         $this->classifier = new Classifier(new SqlText(), new SessionStateSet());
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->varDirs as $dir) {
+            array_map('unlink', glob($dir . '/*') ?: []);
+            rmdir($dir);
+        }
+
+        $this->varDirs = [];
+    }
+
+    /**
+     * The breaker a new request builds: its state is the marker files, so each request gets a fresh object.
+     */
+    protected function breaker(?File $file = null): Breaker
+    {
+        $directoryList = $this->createStub(DirectoryList::class);
+        $directoryList->method('getPath')->willReturnCallback(
+            fn (string $code): string => $code === DirectoryList::VAR_DIR ? $this->varDir : '/nowhere'
+        );
+
+        return new Breaker($directoryList, $file ?? new File(), $this->clock, $this->logger);
     }
 
     /**
@@ -89,7 +134,8 @@ abstract class SplitAdapterTestCase extends TestCase
             $this->positionCookie($deploymentConfig),
             $this->ledger,
             $this->replica,
-            $this->logger
+            $this->breaker($this->fileDriver),
+            new ReplicationStatus()
         );
 
         $adapter = new ReadSplitMysql(

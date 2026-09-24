@@ -58,7 +58,7 @@ class Classifier
             return $this->sessionStateSet->isSessionState($text) ? StatementKind::SessionState : StatementKind::Write;
         }
 
-        return in_array($verb, self::METADATA_READS, true) ? StatementKind::PinningRead : StatementKind::Write;
+        return in_array($verb, self::METADATA_READS, true) ? StatementKind::PrimaryRead : StatementKind::Write;
     }
 
     private function selectKind(string $text): StatementKind

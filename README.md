@@ -14,9 +14,11 @@ The module's adapter is Magento's MySQL adapter, and it stays the primary. Besid
 
 - **It is a plain `SELECT`.** Not `FOR UPDATE`, `LOCK IN SHARE MODE` or `FOR SHARE`, and it calls none of `GET_LOCK`, `RELEASE_LOCK`, `IS_USED_LOCK`, `LAST_INSERT_ID()`, `FOUND_ROWS()`, `SQL_CALC_FOUND_ROWS` or a server variable, and it sets no variable. Those answer from one connection's own state, so they have to run on the primary.
 - **No transaction is open.**
-- **The request has not been pinned.** The first statement that is not a plain `SELECT` pins the rest of the request to the primary: a write, a lock, a transaction, a `SHOW` or `DESCRIBE`, or a `SET` that is not on the allow-list below. So a request that writes a visitor row and then reads it back reads it from the primary.
+- **The request has not been pinned.** The first statement that is not a plain `SELECT` pins the rest of the request to the primary: a write, a lock, a transaction, or a `SET` that is not on the allow-list below. So a request that writes a visitor row and then reads it back reads it from the primary.
 - **The request is a storefront `GET` or `HEAD`**, in the `frontend` or `graphql` area. A `POST`, the admin, REST, SOAP, cron and the command line use the primary for everything.
-- **The replica answered.** A refused connection or a failed statement sends that statement to the primary, and the rest of the request with it. The shopper never sees an error from the replica.
+- **The replica answered, and this node has not taken it out of use.** A refused connection or a failed statement sends that statement to the primary, and the rest of the request with it. The shopper never sees an error from the replica. See [When the replica is down or has stopped replicating](#when-the-replica-is-down-or-has-stopped-replicating).
+
+**`SHOW`, `DESCRIBE`, `DESC` and `EXPLAIN` go to the primary without pinning the request.** They read metadata and write nothing. After a deploy or a cache flush nearly every request describes tables, and pinning them would switch the offload off exactly when load peaks.
 
 A statement the module does not recognise is treated as a write. An unknown statement costs offload, never correctness.
 
@@ -45,6 +47,24 @@ The cookie:
 - is checked against the MariaDB GTID format after decryption and **bound as a parameter** to `MASTER_GTID_WAIT`, never put into SQL text. **A forged or malformed value sends that one request to the primary** and does nothing else.
 
 If the primary cannot give a position, the cookie holds the visitor on the primary until it expires, which is always correct and costs only that visitor's offload.
+
+## When the replica is down or has stopped replicating
+
+**Each web node keeps a breaker: while it is open, no request on that node tries the replica, and every read goes to the primary.** It is two marker files in Magento's `var/` directory, `kingletas_read_split.breaker` and `kingletas_read_split.checked`, and the age of a file is what counts. It is deliberately not kept in Magento's cache: this module sits beneath the cache, and a cache backend may itself be down or kept in the database.
+
+**These open it:**
+
+- the replica refuses a connection, or fails while it is being opened: its replication check, the visitor's GTID check, or the session state being replayed, or later fails a session `SET` it is given;
+- the replica fails a statement that the primary then answers. A statement that fails on both servers is the statement's fault, and does not open it;
+- **replication has stopped or fallen too far behind.** At most once every 30 seconds on each node, the request that opens the replica asks it `SHOW REPLICA STATUS`. If the I/O or the SQL thread is not running, or the replica is more than `max_lag` seconds behind (30 by default), the breaker opens. **If the question cannot be answered**, because of an error, a missing privilege or an empty answer, **the breaker opens as well**: that costs offload, never correctness. A replica that answers queries while its replication has stopped would otherwise serve stale prices and stock with no end, and no cookie would be involved.
+
+**After 30 seconds one request retries.** It claims the retry by touching the marker, so the other requests on that node keep to the primary meanwhile. If the replica opens, replication is running and within `max_lag`, the breaker closes. If not, it stays open for another 30 seconds.
+
+**It logs one warning when it opens, saying why, and one notice when it closes.** It never logs once per request, and a retry that fails logs nothing more.
+
+The user the store connects to the replica as needs the privilege to ask for replication status, which is `SLAVE MONITOR` on MariaDB 10.5 and later. Without it, the question fails and the breaker keeps the replica out of use, so check the log for the warning after turning the module on.
+
+`max_lag` is compared with the replica's own `Seconds_Behind_Master` at each check, so it can be up to 30 seconds out of date between checks. A visitor who has just written is still protected by the GTID check whatever the lag; `max_lag` is for everyone else, and it says how stale a page they are willing to be shown.
 
 ### Neutral to full-page cache
 
@@ -83,6 +103,7 @@ The block goes inside the connection it splits, which for a store is `db/connect
 | `primary_only_tables` | `[]` | Tables whose reads always go to the primary, added to `session`. Names without the store's table prefix |
 | `position_lifetime` | `10` | Seconds a visitor's read-after-write position is honoured, from 1 to 300 |
 | `connect_timeout` | `2` | Seconds to wait for the replica to accept a connection before falling back, from 1 to 30 |
+| `max_lag` | `30` | Seconds the replica may be behind the primary before this node stops reading from it, from 1 to 86400 |
 
 **Turning it off:** set `'enabled' => false`, or remove the block. The next request runs Magento's own adapter. On a server where PHP caches compiled files without checking their timestamps (`opcache.validate_timestamps=0`), PHP only sees the changed `env.php` after its cache is reset, so reload PHP-FPM too. `bin/magento module:disable Kingletas_ReadSplit` removes it entirely.
 
@@ -104,17 +125,19 @@ The GTID check is only true on the backend that then serves the reads. **With `p
 
 **The store has to be served over HTTPS.** The cookie is `Secure`, so a browser on plain HTTP never sends it back, and the next request after a write would read from the replica without a check.
 
-**A replica that is down costs every request its connect timeout.** Each request tries the replica once, waits up to `connect_timeout` seconds, falls back to the primary and logs one warning. While the replica stays down, that is one wait and one log line per request that reads, so use the kill switch rather than leaving it to fall back.
+**A replica that is down costs one request per node every 30 seconds its connect timeout.** The first request to find it down waits up to `connect_timeout` seconds and opens the breaker; after that, one retry every 30 seconds waits the same.
+
+**The breaker is per node only if `var/` is.** A `var/` shared between web servers shares the breaker too, which still keeps every read correct.
 
 **Only the connection with the block is split.** Another connection name in `env.php`, such as an `indexer` connection, runs Magento's own adapter, and a write made through it is not seen by this module.
 
 **A read that writes cannot be seen from the SQL.** A `SELECT` that calls a stored function which writes would go to the replica, where it fails and falls back, or writes to the replica. Magento's own code does not do this; check a third-party module that uses stored functions before turning it on.
 
-**A cold cache pins more requests.** After a cache flush, Magento describes tables and takes `GET_LOCK` while it rebuilds its caches, and both pin the request to the primary. Offload returns as the caches fill.
+**A cold cache pins more requests.** After a cache flush, Magento takes `GET_LOCK` while it rebuilds its caches, and that pins the request to the primary. The table descriptions it also makes go to the primary without pinning. Offload returns as the caches fill.
 
 ## What is proved, and what is not
 
-The unit, wiring, behaviour and performance suites prove every routing rule in both directions, the session-state replay and its order, the fallback, the cookie's validation and its cache rule, and that an unconfigured store runs Magento's own adapter. They run against doubles of the primary, the replica and the browser. **Nothing about a running store is proved yet:** that the reads arrive at a real replica, that the writes a storefront makes land on the primary, that browsing, add to cart and checkout pass with a replica lagging on purpose, that the Varnish hit rate is unchanged, and what it does to load on either server.
+The unit, wiring, behaviour and performance suites prove every routing rule in both directions, the session-state replay and its order, the fallback, the breaker and the replication check, the cookie's validation and its cache rule, and that an unconfigured store runs Magento's own adapter. They run against doubles of the primary, the replica and the browser. **Nothing about a running store is proved yet:** that the reads arrive at a real replica, that the writes a storefront makes land on the primary, that browsing, add to cart and checkout pass with a replica lagging on purpose, that a stopped SQL thread opens the breaker, that the Varnish hit rate is unchanged, and what it does to load on either server.
 
 ## Installing it
 
@@ -140,7 +163,7 @@ In production mode, also run `bin/magento setup:di:compile`. The module does not
 
 ## Requirements
 
-PHP 8.3 or 8.4, Mage-OS or Magento Open Source 2.4.8 or later, and a MariaDB replica fed by GTID replication for the read-after-write check.
+PHP 8.3 or 8.4, Mage-OS or Magento Open Source 2.4.8 or later, and a MariaDB 10.5 or later replica fed by GTID replication, for the read-after-write check and `SHOW REPLICA STATUS`.
 
 ## Working on it
 

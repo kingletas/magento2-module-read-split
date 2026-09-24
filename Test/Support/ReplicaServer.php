@@ -26,6 +26,21 @@ class ReplicaServer implements ReplicaConnectorInterface
 
     public bool $refuseConnections = false;
 
+    public bool $failGtidCheck = false;
+
+    /**
+     * What SHOW REPLICA STATUS answers, as MariaDB names the columns; null makes the question fail.
+     *
+     * @var array<string, string|null>|null
+     */
+    public ?array $status = [
+        'Slave_IO_Running' => 'Yes',
+        'Slave_SQL_Running' => 'Yes',
+        'Seconds_Behind_Master' => '0',
+    ];
+
+    public int $statusChecks = 0;
+
     /**
      * A statement matching this pattern fails on the replica.
      */
@@ -89,8 +104,28 @@ class ReplicaServer implements ReplicaConnectorInterface
         return new RowsStatement([['source' => $backend]]);
     }
 
+    /**
+     * The status question is answered without taking a backend's turn, so routing reads the same with it.
+     *
+     * @return array<string, string|null>
+     */
+    public function replicationStatus(): array
+    {
+        ++$this->statusChecks;
+
+        if ($this->status === null) {
+            throw new RuntimeException('Access denied; you need the SLAVE MONITOR privilege.');
+        }
+
+        return $this->status;
+    }
+
     public function hasReached(string $position): bool
     {
+        if ($this->failGtidCheck) {
+            throw new RuntimeException('The invented replica failed the GTID check.');
+        }
+
         $backend = $this->nextBackend();
         $this->statements[] = ['backend' => $backend, 'sql' => 'MASTER_GTID_WAIT', 'bind' => [$position]];
 

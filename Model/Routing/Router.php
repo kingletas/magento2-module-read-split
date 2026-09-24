@@ -58,6 +58,7 @@ class Router
         return match ($statement->kind()) {
             StatementKind::Read => $this->routeRead($statement, $transactionLevel),
             StatementKind::SessionState => Route::PrimaryAndReplica,
+            StatementKind::PrimaryRead => Route::Primary,
             StatementKind::PinningRead => $this->pin(),
             StatementKind::Write => $this->write(),
         };
@@ -73,7 +74,7 @@ class Router
         }
 
         match ($this->classifier->classify($sql)->kind()) {
-            StatementKind::Read => null,
+            StatementKind::Read, StatementKind::PrimaryRead => null,
             StatementKind::Write => $this->write(),
             // Session state set outside routing is never replayed, so the replica could not match it.
             StatementKind::SessionState, StatementKind::PinningRead => $this->pin(),
@@ -96,6 +97,14 @@ class Router
     public function askReplica(string $sql, mixed $bind): mixed
     {
         return $this->replica->query($sql, $bind, $this->position()->position());
+    }
+
+    /**
+     * The primary answered a statement the replica had failed, which puts the fault on the replica.
+     */
+    public function primaryAnsweredWhatTheReplicaFailed(): void
+    {
+        $this->replica->confirmFailure();
     }
 
     public function rememberSessionState(string $sql, mixed $bind): void
@@ -128,7 +137,7 @@ class Router
             return Route::Primary;
         }
 
-        return $this->isStorefrontRead() && $this->replica->isAvailable() && $this->positionAllowsReplica()
+        return $this->isStorefrontRead() && $this->positionAllowsReplica() && $this->replica->isAvailable()
             ? Route::Replica
             : Route::Primary;
     }

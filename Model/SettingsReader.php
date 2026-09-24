@@ -44,7 +44,8 @@ class SettingsReader
             replicaConfig: $this->replicaConfig($this->withoutSettings($connectionConfig), $block),
             pooled: ($block['pooled'] ?? false) === true,
             primaryOnlyTables: $this->primaryOnlyTables($block['primary_only_tables'] ?? []),
-            positionLifetime: $this->bounded($block['position_lifetime'] ?? null, 10, 1, 300)
+            positionLifetime: $this->bounded($block['position_lifetime'] ?? null, 10, 1, 300),
+            maxLag: $this->bounded($block['max_lag'] ?? null, 30, 1, 86400)
         );
     }
 

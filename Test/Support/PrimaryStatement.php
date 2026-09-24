@@ -29,6 +29,10 @@ class PrimaryStatement extends PDOStatement
 
     public function execute(?array $params = null): bool
     {
+        if ($this->primary->failOn !== '' && preg_match($this->primary->failOn, $this->sql) === 1) {
+            throw new PDOException('The invented primary refused a statement.');
+        }
+
         if ($this->isPosition && $this->primary->refusePosition) {
             throw new PDOException('Unknown system variable, from the invented primary.');
         }

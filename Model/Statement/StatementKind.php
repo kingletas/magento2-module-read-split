@@ -17,7 +17,10 @@ enum StatementKind
     /** A plain SELECT, which the replica may answer. */
     case Read;
 
-    /** A SELECT or a metadata read that must run on the primary and pins the request there, but writes nothing. */
+    /** A metadata read, which the primary answers without pinning the request. */
+    case PrimaryRead;
+
+    /** A SELECT that must run on the primary and pins the request there, but writes nothing. */
     case PinningRead;
 
     /** An allow-listed SET of session state, which runs on the primary and is replayed on the replica. */

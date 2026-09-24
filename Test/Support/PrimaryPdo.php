@@ -34,6 +34,11 @@ class PrimaryPdo extends PDO
     public bool $refusePosition = false;
 
     /**
+     * A statement matching this pattern fails on the primary too.
+     */
+    public string $failOn = '';
+
+    /**
      * No connection is opened; the adapter is handed this object as if it had just connected.
      */
     public function __construct()

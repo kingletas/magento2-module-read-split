@@ -11,6 +11,7 @@ namespace Kingletas\ReadSplit\Test\Performance;
 
 use Kingletas\ReadSplit\Model\Adapter\ReadSplitMysql;
 use Kingletas\ReadSplit\Test\Support\CountingClassifier;
+use Kingletas\ReadSplit\Test\Support\CountingFile;
 use Kingletas\ReadSplit\Test\Support\SplitAdapterTestCase;
 
 /**
@@ -47,6 +48,30 @@ class ReplicaCostTest extends SplitAdapterTestCase
         $reads = fn (): int => $this->cookies->reads + $this->scope->asked;
 
         $this->assertSame([2, 2], [$this->countFor(1, $reads), $this->countFor(200, $reads)]);
+    }
+
+    public function testTheBreakerMarkersAreLookedAtAFixedNumberOfTimesPerRequest(): void
+    {
+        $looks = [$this->markerLooksFor(1), $this->markerLooksFor(200)];
+
+        $this->assertSame($looks[0], $looks[1]);
+        $this->assertLessThanOrEqual(3, $looks[0], 'The breaker marker, and the replication marker when due');
+    }
+
+    private function markerLooksFor(int $reads): int
+    {
+        $this->setUp();
+        $file = new CountingFile();
+        $this->fileDriver = $file;
+        $this->breaker($file)->claimHealthCheck();
+        $file->looks = 0;
+        $adapter = $this->adapter();
+
+        for ($read = 0; $read < $reads; ++$read) {
+            $adapter->fetchOne('SELECT * FROM store');
+        }
+
+        return $file->looks;
     }
 
     /**

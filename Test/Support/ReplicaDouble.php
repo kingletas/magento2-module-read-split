@@ -27,6 +27,11 @@ class ReplicaDouble implements ReplicaConnectionInterface
         return $this->server->run($sql, $bind);
     }
 
+    public function replicationStatus(): array
+    {
+        return $this->server->replicationStatus();
+    }
+
     public function hasReached(string $position): bool
     {
         return $this->server->hasReached($position);
