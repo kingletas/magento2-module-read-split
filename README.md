@@ -113,6 +113,8 @@ The GTID check is only true on the backend that then serves the reads. **With `p
 
 **With `pooled: true`,** the replica host is a proxy or balancer that may send each statement to a different backend. A check answered by one backend proves nothing about the next, so the module skips the check, and **a visitor with a pending position reads from the primary until the position expires**, about ten seconds. That is always correct, and gives up offload for those visitors only. Visitors who have not just written read from the pool as usual.
 
+**Behind a pool, the replication check sees only the backend that answered it**, so the proxy has to take a lagging or stopped backend out of the pool itself, with its own lag threshold. The module cannot see behind the proxy.
+
 **No proxy is claimed as working with this module.** Neither setting has been proved behind a real proxy or balancer yet, and until one has, treat both as untested there.
 
 ## Before you turn it on
