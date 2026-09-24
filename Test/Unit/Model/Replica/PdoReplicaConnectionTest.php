@@ -78,6 +78,23 @@ class PdoReplicaConnectionTest extends TestCase
         $this->assertSame($caughtUp, (new PdoReplicaConnection($adapter))->hasReached('0-1-996'));
     }
 
+    public function testReplicationStatusIsTheReplicasOwnRow(): void
+    {
+        $row = ['Slave_IO_Running' => 'Yes', 'Slave_SQL_Running' => 'Yes', 'Seconds_Behind_Master' => '0'];
+        $adapter = $this->createMock(Mysql::class);
+        $adapter->expects($this->once())->method('fetchRow')->with('SHOW REPLICA STATUS')->willReturn($row);
+
+        $this->assertSame($row, (new PdoReplicaConnection($adapter))->replicationStatus());
+    }
+
+    public function testAServerThatIsNotAReplicaGivesAnEmptyStatus(): void
+    {
+        $adapter = $this->createStub(Mysql::class);
+        $adapter->method('fetchRow')->willReturn(false);
+
+        $this->assertSame([], (new PdoReplicaConnection($adapter))->replicationStatus());
+    }
+
     public function testAQueryIsPassedToTheCoreAdapterUnchanged(): void
     {
         $statement = $this->createStub(Zend_Db_Statement_Interface::class);
