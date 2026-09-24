@@ -32,6 +32,7 @@
     </testsuites>
     <source>
         <include>
+            <directory suffix=".php">Console</directory>
             <directory suffix=".php">Model</directory>
             <directory suffix=".php">Observer</directory>
         </include>

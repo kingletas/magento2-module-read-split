@@ -11,6 +11,7 @@ namespace Kingletas\ReadSplit\Test\Unit\Model;
 
 use Kingletas\ReadSplit\Model\Settings;
 use Kingletas\ReadSplit\Model\SettingsReader;
+use Kingletas\ReadSplit\Model\SettingsState;
 use Magento\Framework\App\DeploymentConfig;
 use PDO;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -40,6 +41,58 @@ class SettingsReaderTest extends TestCase
 
         $this->assertTrue($settings->isActive());
         $this->assertSame('db-replica.example', $settings->replicaConfig()['host']);
+    }
+
+    /**
+     * Magento's connection type adds these before its adapter sees the config, which the whole-array comparison missed.
+     */
+    public function testTheConfigMagentosConnectionTypeAddsStillMatches(): void
+    {
+        $validated = self::DEFAULT_CONNECTION + ['type' => 'pdo_mysql'];
+        $validated['active'] = true;
+
+        $settings = $this->reader(['replica' => ['host' => 'db-replica.example']])->read($validated);
+
+        $this->assertTrue($settings->isActive());
+        $this->assertSame(SettingsState::Active, $settings->state());
+    }
+
+    /**
+     * @return array<string, array{0: array<string, mixed>, 1: array<string, mixed>, 2: bool}>
+     */
+    public static function connectionIdentities(): array
+    {
+        $base = ['dbname' => 'invented_store', 'username' => 'invented_user', 'password' => 'invented-password'];
+
+        return [
+            'the port written into the host, and the default port' => [
+                ['host' => 'db:3306'] + $base, ['host' => 'db'] + $base, true,
+            ],
+            'the host and a separate port key' => [
+                ['host' => 'db:3307'] + $base, ['host' => 'db', 'port' => 3307] + $base, true,
+            ],
+            'the host in another case' => [['host' => 'DB.example'] + $base, ['host' => 'db.example'] + $base, true],
+            'other credentials, same server and database' => [
+                ['host' => 'db'] + $base, ['host' => 'db', 'username' => 'invented_other'] + $base, true,
+            ],
+            'the same socket' => [['host' => '/run/a.sock'] + $base, ['host' => '/run/a.sock'] + $base, true],
+            'another port' => [['host' => 'db:3307'] + $base, ['host' => 'db'] + $base, false],
+            'another host' => [['host' => 'db-a'] + $base, ['host' => 'db-b'] + $base, false],
+            'another database' => [['host' => 'db'] + $base, ['host' => 'db', 'dbname' => 'other_db'] + $base, false],
+            'another socket' => [['host' => '/run/a.sock'] + $base, ['host' => '/run/b.sock'] + $base, false],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $inEnv the connection as env.php holds it
+     * @param array<string, mixed> $handed the connection config an adapter is given
+     */
+    #[DataProvider('connectionIdentities')]
+    public function testConnectionsAreMatchedByServerAndDatabase(array $inEnv, array $handed, bool $splits): void
+    {
+        $reader = $this->reader(['replica' => ['host' => 'db-replica.example']], $inEnv);
+
+        $this->assertSame($splits, $reader->read($handed)->isActive());
     }
 
     public function testAnotherConnectionIsNotSplit(): void
@@ -106,9 +159,63 @@ class SettingsReaderTest extends TestCase
     }
 
     #[DataProvider('noReplicaHost')]
-    public function testWithoutAReplicaHostItIsOff(mixed $block): void
+    public function testWithoutAReplicaHostItIsRefusedWithTheReason(mixed $block): void
     {
-        $this->assertFalse($this->reader($block)->read(self::DEFAULT_CONNECTION)->isActive());
+        $settings = $this->reader($block)->read(self::DEFAULT_CONNECTION);
+
+        $this->assertFalse($settings->isActive());
+        $this->assertSame(SettingsState::Refused, $settings->state());
+        $this->assertStringContainsString(is_array($block) ? 'replica host' : 'db/read_split', $settings->reason());
+    }
+
+    public function testAReplicaWithNoDatabaseNameIsRefusedWhenTheSettingsAreRead(): void
+    {
+        $connection = self::DEFAULT_CONNECTION;
+        unset($connection['dbname']);
+        $settings = $this->reader(['replica' => ['host' => 'db-replica.example']], $connection)->read($connection);
+
+        $this->assertSame(SettingsState::Refused, $settings->state());
+        $this->assertStringContainsString('database name', $settings->reason());
+    }
+
+    public function testAReplicaNamingItsOwnDatabaseNeedsNoneOnTheConnection(): void
+    {
+        $connection = self::DEFAULT_CONNECTION;
+        unset($connection['dbname']);
+        $block = ['replica' => ['host' => 'db-replica.example', 'dbname' => 'invented_copy']];
+        $reader = $this->reader($block, $connection);
+
+        $this->assertTrue($reader->read($connection)->isActive());
+    }
+
+    public function testABlockNamingAConnectionThatDoesNotExistIsRefused(): void
+    {
+        $settings = $this->reader(['connection' => 'invented', 'replica' => ['host' => 'db-replica.example']])
+            ->read(self::DEFAULT_CONNECTION);
+
+        $this->assertSame(SettingsState::Refused, $settings->state());
+        $this->assertStringContainsString('db/connection/invented', $settings->reason());
+    }
+
+    public function testTheStatesThatAreNotRefusals(): void
+    {
+        $block = ['replica' => ['host' => 'db-replica.example']];
+        $indexer = ['host' => 'db-indexer.example'] + self::DEFAULT_CONNECTION;
+
+        $this->assertSame(SettingsState::NotConfigured, $this->reader(null)->read(self::DEFAULT_CONNECTION)->state());
+        $this->assertSame(
+            SettingsState::SwitchedOff,
+            $this->reader(['enabled' => false] + $block)->read(self::DEFAULT_CONNECTION)->state()
+        );
+        $this->assertSame(SettingsState::OtherConnection, $this->reader($block)->read($indexer)->state());
+    }
+
+    public function testTheTargetConnectionIsReadForTheStatusCommand(): void
+    {
+        $settings = $this->reader(['replica' => ['host' => 'db-replica.example:3307']])->forTarget();
+
+        $this->assertTrue($settings->isActive());
+        $this->assertSame(['db-replica.example', '3307', 'invented_store'], $settings->replicaIdentity());
     }
 
     public function testTheDefaults(): void

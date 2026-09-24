@@ -115,6 +115,16 @@ The block goes at `db/read_split` in `app/etc/env.php`, beside the connections, 
 | `read_timeout` | `5` | Seconds the replica may take to answer, from its greeting on, before the request falls back to the primary and the breaker opens, from 1 to 60. The server also stops any replica query after one second less |
 | `max_lag` | `30` | Seconds the replica may be behind the primary before this node stops reading from it, from 1 to 86400 |
 
+**The block is checked when the settings are read, not at connect.** It splits the connection whose server and database match the one it names: host and port, with `db:3306` and `db` plus port 3306 counted as the same, and the database name. Nothing else in the connection is compared, since Magento adds keys of its own before its adapter sees the config. A block with no replica host, a replica with no database name (neither `replica.dbname` nor the connection's `dbname`), or a `connection` that does not exist is refused: every read goes to the primary, and a warning with the reason is logged at most once an hour per node.
+
+### The deploy check
+
+```bash
+bin/magento kingletas:read-split:status
+```
+
+It prints whether the split is active, the replica it resolved (host, port and database, never the password), and the breaker's state: closed, or open with the seconds until the next retry and where its marker is kept. **It exits non-zero when a `db/read_split` block is present but not in use, with the reason**, so a deploy can refuse a store where the module is installed and doing nothing. A store with no block, or with the kill switch off, passes: the kill switch is how an incident is handled, and a deploy that fixes the incident must not be refused for it.
+
 **Turning it off:** set `'enabled' => false`, or remove the block. The next request runs Magento's own adapter. On a server where PHP caches compiled files without checking their timestamps (`opcache.validate_timestamps=0`), PHP only sees the changed `env.php` after its cache is reset, so reload PHP-FPM too. `bin/magento module:disable Kingletas_ReadSplit` removes it entirely.
 
 ### What `pooled` means

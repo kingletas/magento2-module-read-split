@@ -43,7 +43,7 @@ class Breaker implements ResetAfterRequestInterface
     }
 
     /**
-     * The same breaker for one replica host, whose markers no other host or installation on the node shares.
+     * The same breaker for one replica host, whose markers nothing else shares; one for no host never lets it be tried.
      */
     public function withReplicaHost(string $host): self
     {
@@ -59,6 +59,10 @@ class Breaker implements ResetAfterRequestInterface
      */
     public function allowsAttempt(): bool
     {
+        if ($this->replicaHost === '') {
+            return false;
+        }
+
         $age = $this->age('breaker');
 
         if ($age === null) {
@@ -75,6 +79,24 @@ class Breaker implements ResetAfterRequestInterface
     }
 
     /**
+     * Seconds until the next retry and where the marker is kept, or null while the breaker is closed.
+     *
+     * @return array{remaining: int, keptIn: string}|null
+     */
+    public function openState(): ?array
+    {
+        $ages = $this->replicaHost === '' ? [] : $this->ages('breaker');
+
+        if ($ages === []) {
+            return null;
+        }
+
+        $age = min($ages);
+
+        return ['remaining' => max(0, self::WINDOW - $age), 'keptIn' => (string) array_search($age, $ages, true)];
+    }
+
+    /**
      * Whether this request is the one retrying an open breaker.
      */
     public function isProbing(): bool
@@ -87,6 +109,10 @@ class Breaker implements ResetAfterRequestInterface
      */
     public function trip(string $reason): void
     {
+        if ($this->replicaHost === '') {
+            return;
+        }
+
         $wasOpen = $this->age('breaker') !== null;
         $this->probing = false;
         $where = $this->touch('breaker');
@@ -140,6 +166,10 @@ class Breaker implements ResetAfterRequestInterface
      */
     public function claimHealthCheck(): bool
     {
+        if ($this->replicaHost === '') {
+            return false;
+        }
+
         $age = $this->age('checked');
 
         return ($age === null || $age >= self::WINDOW) && $this->touch('checked') !== null;
@@ -191,19 +221,31 @@ class Breaker implements ResetAfterRequestInterface
      */
     private function age(string $kind): ?int
     {
+        $ages = $this->ages($kind);
+
+        return $ages === [] ? null : min($ages);
+    }
+
+    /**
+     * Each existing copy's age, by where it is kept: "var" or "temp".
+     *
+     * @return array<string, int>
+     */
+    private function ages(string $kind): array
+    {
         $ages = [];
 
-        foreach ($this->paths($kind) as $path) {
+        foreach ($this->paths($kind) as $where => $path) {
             try {
                 if ($this->file->isExists($path)) {
-                    $ages[] = $this->clock->now() - (int) ($this->file->stat($path)['mtime'] ?? 0);
+                    $ages[$where] = $this->clock->now() - (int) ($this->file->stat($path)['mtime'] ?? 0);
                 }
             } catch (Throwable) {
                 continue;
             }
         }
 
-        return $ages === [] ? null : min($ages);
+        return $ages;
     }
 
     /**

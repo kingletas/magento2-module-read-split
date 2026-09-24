@@ -19,7 +19,8 @@ class Settings
      * @param string[] $primaryOnlyTables table names as the database knows them, prefix included
      */
     public function __construct(
-        private readonly bool $active,
+        private readonly SettingsState $state,
+        private readonly string $reason = '',
         private readonly array $replicaConfig = [],
         private readonly bool $pooled = false,
         private readonly array $primaryOnlyTables = [],
@@ -31,11 +32,34 @@ class Settings
     }
 
     /**
-     * False when the kill switch is off or no replica is configured, and the store then runs the core adapter.
+     * False unless the block splits this connection and is complete; the store then runs the core adapter.
      */
     public function isActive(): bool
     {
-        return $this->active;
+        return $this->state === SettingsState::Active;
+    }
+
+    public function state(): SettingsState
+    {
+        return $this->state;
+    }
+
+    /**
+     * Why a configured block is not in use, empty otherwise.
+     */
+    public function reason(): string
+    {
+        return $this->reason;
+    }
+
+    /**
+     * The replica's host, port and database, never its credentials.
+     *
+     * @return array{0: string, 1: string, 2: string}
+     */
+    public function replicaIdentity(): array
+    {
+        return (new ConnectionIdentity())->of($this->replicaConfig);
     }
 
     /**

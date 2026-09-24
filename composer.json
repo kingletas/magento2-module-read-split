@@ -46,7 +46,7 @@
         "cs": "phpcs --standard=phpcs.xml.dist",
         "cs-fix": "phpcbf --standard=phpcs.xml.dist",
         "stan": "phpstan analyse --configuration phpstan.neon.dist --no-progress",
-        "md": "phpmd Model,Observer text phpmd.xml.dist",
+        "md": "phpmd Console,Model,Observer text phpmd.xml.dist",
         "test": "phpunit --configuration phpunit.xml.dist",
         "test-behaviour": "phpunit --configuration phpunit.xml.dist --testsuite behaviour",
         "test-performance": "phpunit --configuration phpunit.xml.dist --testsuite performance",

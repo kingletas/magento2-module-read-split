@@ -12,6 +12,7 @@ parameters:
     bootstrapFiles:
         - Test/generated-classes.php
     paths:
+        - Console
         - Model
         - Observer
     excludePaths:

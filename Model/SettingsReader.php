@@ -27,13 +27,16 @@ class SettingsReader
      */
     private const array DEFAULT_PRIMARY_ONLY = ['session', 'quote*', 'quote_id_mask', 'sales_order*'];
 
+    private readonly ConnectionIdentity $connectionIdentity;
+
     public function __construct(
         private readonly DeploymentConfig $deploymentConfig
     ) {
+        $this->connectionIdentity = new ConnectionIdentity();
     }
 
     /**
-     * The settings for one connection, active only when the block splits that connection.
+     * The settings for one connection, active only when the block splits that connection and is complete.
      *
      * @param array<string, mixed> $connectionConfig
      */
@@ -41,18 +44,72 @@ class SettingsReader
     {
         $block = $this->deploymentConfig->get(self::PATH);
 
-        if (!is_array($block) || !$this->isSwitchedOn($block) || !$this->hasReplicaHost($block)
-            || !$this->splits($block, $connectionConfig)
-        ) {
-            return new Settings(active: false);
+        if ($block === null) {
+            return new Settings(SettingsState::NotConfigured);
+        }
+
+        if (!is_array($block)) {
+            return new Settings(SettingsState::Refused, 'db/read_split is not a list of settings');
+        }
+
+        if (!$this->isSwitchedOn($block)) {
+            return new Settings(SettingsState::SwitchedOff);
+        }
+
+        $name = is_string($block['connection'] ?? null) ? $block['connection'] : 'default';
+        $target = $this->deploymentConfig->get('db/connection/' . $name);
+
+        if (!is_array($target)) {
+            return new Settings(
+                SettingsState::Refused,
+                'db/connection/' . $name . ', the connection db/read_split splits, does not exist'
+            );
+        }
+
+        if (!$this->connectionIdentity->same($target, $connectionConfig)) {
+            return new Settings(SettingsState::OtherConnection);
+        }
+
+        return $this->forConnection($connectionConfig, $block);
+    }
+
+    /**
+     * The settings for the connection the block splits, as the status command reports them.
+     */
+    public function forTarget(): Settings
+    {
+        $block = $this->deploymentConfig->get(self::PATH);
+        $name = is_array($block) && is_string($block['connection'] ?? null) ? $block['connection'] : 'default';
+        $target = $this->deploymentConfig->get('db/connection/' . $name);
+
+        return $this->read(is_array($target) ? $target : []);
+    }
+
+    /**
+     * @param array<string, mixed> $connectionConfig
+     * @param array<mixed> $block
+     */
+    private function forConnection(array $connectionConfig, array $block): Settings
+    {
+        if (!$this->hasReplicaHost($block)) {
+            return new Settings(SettingsState::Refused, 'db/read_split has no replica host');
+        }
+
+        $replica = $this->replicaConfig($connectionConfig, $block);
+
+        if ($this->connectionIdentity->of($replica)[2] === '') {
+            return new Settings(
+                SettingsState::Refused,
+                'the replica has no database name: set replica.dbname, or dbname on the connection'
+            );
         }
 
         $maxLag = $this->bounded($block['max_lag'] ?? null, 30, 1, 86400);
         $lifetime = $this->number($block['position_lifetime'] ?? null);
 
         return new Settings(
-            active: true,
-            replicaConfig: $this->replicaConfig($connectionConfig, $block),
+            state: SettingsState::Active,
+            replicaConfig: $replica,
             pooled: ($block['pooled'] ?? false) === true,
             primaryOnlyTables: $this->primaryOnlyTables($block['primary_only_tables'] ?? []),
             positionLifetime: $lifetime === null || $lifetime < $maxLag ? $maxLag : min($lifetime, 300),
@@ -62,19 +119,6 @@ class SettingsReader
         );
     }
 
-    /**
-     * The block splits the connection it names, the default one unless it says otherwise.
-     *
-     * @param array<mixed> $block
-     * @param array<string, mixed> $connectionConfig
-     */
-    private function splits(array $block, array $connectionConfig): bool
-    {
-        $name = is_string($block['connection'] ?? null) ? $block['connection'] : 'default';
-        $named = $this->deploymentConfig->get('db/connection/' . $name);
-
-        return is_array($named) && $named == $connectionConfig;
-    }
     /**
      * @param array<mixed> $block
      */

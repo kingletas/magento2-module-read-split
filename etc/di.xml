@@ -33,6 +33,20 @@
         </arguments>
     </type>
 
+    <!-- The command name is wiring, so a rebrand renames it with everything else. -->
+    <type name="Kingletas\ReadSplit\Console\Command\StatusCommand">
+        <arguments>
+            <argument name="name" xsi:type="string">kingletas:read-split:status</argument>
+        </arguments>
+    </type>
+    <type name="Magento\Framework\Console\CommandListInterface">
+        <arguments>
+            <argument name="commands" xsi:type="array">
+                <item name="kingletas_read_split_status" xsi:type="object">Kingletas\ReadSplit\Console\Command\StatusCommand</item>
+            </argument>
+        </arguments>
+    </type>
+
     <!-- Built with every split connection, so nothing it needs may reach the database while it is being built. -->
     <type name="Kingletas\ReadSplit\Model\Routing\RouterFactory">
         <arguments>

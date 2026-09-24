@@ -11,6 +11,7 @@ namespace Kingletas\ReadSplit\Test\Unit\Model;
 
 use Kingletas\ReadSplit\Model\Adapter\ReadSplitMysql;
 use Kingletas\ReadSplit\Model\ConnectionType;
+use Kingletas\ReadSplit\Model\Replica\Breaker;
 use Kingletas\ReadSplit\Model\SettingsReader;
 use Magento\Framework\App\DeploymentConfig;
 use Magento\Framework\DB\Adapter\Pdo\Mysql;
@@ -74,6 +75,8 @@ class ConnectionTypeTest extends TestCase
             }
         );
 
-        (new ConnectionType(self::PRIMARY, $factory, new SettingsReader($deploymentConfig)))->getConnection();
+        $breaker = $this->createStub(Breaker::class);
+
+        (new ConnectionType(self::PRIMARY, $factory, new SettingsReader($deploymentConfig), $breaker))->getConnection();
     }
 }

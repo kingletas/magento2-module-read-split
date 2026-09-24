@@ -134,7 +134,7 @@ abstract class SplitAdapterTestCase extends TestCase
         );
         $directoryList->method('getRoot')->willReturn($this->installRoot);
 
-        return new Breaker(
+        $breaker = new Breaker(
             $directoryList,
             $file ?? new File(),
             $this->clock,
@@ -142,6 +142,8 @@ abstract class SplitAdapterTestCase extends TestCase
             'kingletas_read_split',
             $this->tempDir
         );
+
+        return $breaker->withReplicaHost('db-replica.example');
     }
 
     /**
@@ -169,7 +171,19 @@ abstract class SplitAdapterTestCase extends TestCase
      */
     protected function adapter(array $readSplit = [], string $tablePrefix = ''): ReadSplitMysql
     {
-        $deploymentConfig = $this->deploymentConfig($tablePrefix, $this->readSplitBlock($readSplit));
+        return $this->adapterFor(
+            $this->connectionConfig(),
+            $this->deploymentConfig($tablePrefix, $this->readSplitBlock($readSplit))
+        );
+    }
+
+    /**
+     * The module's adapter built with the given connection config, as Magento's factory would hand it over.
+     *
+     * @param array<string, mixed> $config
+     */
+    protected function adapterFor(array $config, DeploymentConfig $deploymentConfig): ReadSplitMysql
+    {
         $routerFactory = new RouterFactory(
             $this->classifier,
             $this->scope,
@@ -187,14 +201,22 @@ abstract class SplitAdapterTestCase extends TestCase
             new SelectFactory(new SelectRenderer([])),
             new SettingsReader($deploymentConfig),
             $routerFactory,
-            $this->connectionConfig(),
+            $config,
             $this->createStub(SerializerInterface::class),
             $this->createStub(DtoFactoriesTable::class)
         );
 
-        (new ReflectionProperty(Zend_Db_Adapter_Abstract::class, '_connection'))->setValue($adapter, $this->primary);
+        $this->injectPrimary($adapter);
 
         return $adapter;
+    }
+
+    /**
+     * Hands the adapter the recording primary, as if it had just connected.
+     */
+    protected function injectPrimary(ReadSplitMysql $adapter): void
+    {
+        (new ReflectionProperty(Zend_Db_Adapter_Abstract::class, '_connection'))->setValue($adapter, $this->primary);
     }
 
     /**

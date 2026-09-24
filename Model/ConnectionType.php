@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Kingletas\ReadSplit\Model;
 
 use Kingletas\ReadSplit\Model\Adapter\ReadSplitMysql;
+use Kingletas\ReadSplit\Model\Replica\Breaker;
 use Magento\Framework\DB\Adapter\Pdo\MysqlFactory;
 use Magento\Framework\Model\ResourceModel\Type\Db\Pdo\Mysql as CoreConnectionType;
 
@@ -26,9 +27,19 @@ class ConnectionType extends CoreConnectionType
     public function __construct(
         array $config,
         MysqlFactory $mysqlFactory,
-        SettingsReader $settingsReader
+        SettingsReader $settingsReader,
+        Breaker $breaker
     ) {
-        $this->split = $settingsReader->read($config)->isActive();
+        $settings = $settingsReader->read($config);
+        $this->split = $settings->isActive();
+
+        if ($settings->state() === SettingsState::Refused) {
+            $breaker->warnOccasionally(
+                'inactive',
+                'Read split: db/read_split is configured but not in use, so every read goes to the primary: '
+                . $settings->reason() . '.'
+            );
+        }
 
         parent::__construct($config, $mysqlFactory);
     }

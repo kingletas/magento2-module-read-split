@@ -68,6 +68,10 @@ class WiringTest extends TestCase
     public function testEveryArgumentDiXmlSetsIsAConstructorParameter(): void
     {
         foreach ($this->xml('etc/di.xml')->xpath('//type') ?: [] as $type) {
+            if (interface_exists((string) $type['name'])) {
+                continue;
+            }
+
             $parameters = array_map(
                 static fn (\ReflectionParameter $parameter): string => $parameter->getName(),
                 (new ReflectionClass((string) $type['name']))->getConstructor()?->getParameters() ?? []
@@ -142,6 +146,22 @@ class WiringTest extends TestCase
 
         $this->assertFileDoesNotExist($this->root() . '/etc/db_schema.xml');
         $this->assertDirectoryDoesNotExist($this->root() . '/Setup');
+    }
+
+    /**
+     * The command name is a di.xml argument, so a rebrand renames it with everything else.
+     */
+    public function testTheStatusCommandIsRegisteredUnderItsName(): void
+    {
+        $config = $this->xml('etc/di.xml');
+        $command = 'Kingletas\\ReadSplit\\Console\\Command\\StatusCommand';
+        $listed = $config->xpath('//type[@name="Magento\\Framework\\Console\\CommandListInterface"]//item') ?: [];
+        $name = $config->xpath('//type[@name="' . $command . '"]/arguments/argument[@name="name"]') ?: [];
+
+        $items = array_map(static fn (SimpleXMLElement $item): string => trim((string) $item), $listed);
+
+        $this->assertSame([$command], $items);
+        $this->assertSame('kingletas:read-split:status', trim((string) ($name[0] ?? '')));
     }
 
     public function testTheModuleNameAgreesEverywhere(): void

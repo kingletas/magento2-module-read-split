@@ -49,7 +49,7 @@ class Router
 
     public function route(string $sql, int $transactionLevel): Route
     {
-        if ($this->isCommandLine() || ($this->pinned && $this->wrote)) {
+        if (!$this->settings->isActive() || $this->isCommandLine() || ($this->pinned && $this->wrote)) {
             return Route::Primary;
         }
 
@@ -69,7 +69,7 @@ class Router
      */
     public function notePrimaryStatement(string $sql): void
     {
-        if ($this->isCommandLine() || ($this->pinned && $this->wrote)) {
+        if (!$this->settings->isActive() || $this->isCommandLine() || ($this->pinned && $this->wrote)) {
             return;
         }
 

@@ -38,7 +38,8 @@ class RouterFactory
 
     public function create(Settings $settings, DbLogger $dbLogger, SelectFactory $selectFactory): Router
     {
-        $breaker = $this->breaker->withReplicaHost((string) ($settings->replicaConfig()['host'] ?? ''));
+        $identity = $settings->replicaIdentity();
+        $breaker = $this->breaker->withReplicaHost($settings->isActive() ? $identity[0] . ':' . $identity[1] : '');
 
         if ($settings->positionLifetimeWasRaised()) {
             $breaker->warnOccasionally(

@@ -17,6 +17,22 @@ use Psr\Log\LoggerInterface;
  */
 class BreakerTest extends SplitAdapterTestCase
 {
+    /**
+     * A breaker for no host would be shared by every misconfigured connection on the node, so it does nothing.
+     */
+    public function testABreakerForNoHostNeverAllowsTheReplicaAndNeverWritesAMarker(): void
+    {
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->never())->method('warning');
+        $breaker = $this->breaker()->withReplicaHost('');
+
+        $this->assertFalse($breaker->allowsAttempt());
+        $breaker->trip('invented reason');
+        $this->assertFalse($breaker->claimHealthCheck());
+        $this->assertSame([], $this->markers());
+        $this->assertTrue($this->breaker()->withReplicaHost('db-replica.example')->allowsAttempt());
+    }
+
     public function testAClosedBreakerAllowsTheReplicaAndLeavesNoFile(): void
     {
         $this->assertTrue($this->breaker()->allowsAttempt());
