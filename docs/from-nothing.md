@@ -108,7 +108,7 @@ Add a `read_split` block to `app/etc/env.php`, **beside** `connection`, never in
 
 Write a port the way Magento writes the primary's, `db-replica.example:3307`. Everything the block does not name is taken from the default connection.
 
-If PHP caches compiled files without checking their timestamps (`opcache.validate_timestamps=0`), reload PHP-FPM so it reads the changed file.
+If PHP caches compiled files without checking their timestamps (`opcache.validate_timestamps=0`), reload PHP-FPM so it reads the changed file. The status command in the next step runs on the command line and always reads the file as it is now, so it can say *active* while PHP-FPM is still serving pages by the old one.
 
 ## Step 4: ask the store what it resolved
 
@@ -127,7 +127,7 @@ That is the working state. **If it says something else:**
 | It prints | What it means |
 |---|---|
 | `Read split: configured but not in use`, then a `Reason:` line | The block is there and cannot be used. The reason names what is missing, and the command exits non-zero, so a deploy can stop on it |
-| `Read split: not configured` | The store did not find the block. It is inside a connection, misspelled, or PHP has not reloaded `env.php` |
+| `Read split: not configured` | The store did not find the block. It is inside a connection, or its key is not `read_split` under `db` |
 | `Read split: switched off in env.php` | The block has `'enabled' => false` |
 
 The breaker line only changes once a storefront request has tried the replica, which is the next step.

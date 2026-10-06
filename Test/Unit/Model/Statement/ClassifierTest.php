@@ -57,7 +57,7 @@ class ClassifierTest extends TestCase
                 StatementKind::SessionState,
             ],
             'an allowed and a refused variable together' => ["SET sql_mode = '', autocommit = 0", StatementKind::Write],
-            'a server variable read in a SET value' => ['SET @invented = @@version', StatementKind::SessionState],
+            'a server variable read in a SET value' => ['SET @invented = @@hostname', StatementKind::Write],
         ];
     }
 

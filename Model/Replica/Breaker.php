@@ -161,7 +161,12 @@ class Breaker implements ResetAfterRequestInterface
                     $this->file->deleteFile($path);
                 }
             } catch (Throwable $e) {
-                $this->logger->warning('Read split: the replica breaker could not be closed.', ['exception' => $e]);
+                $this->logger->warning(
+                    'Read split: the replica answered again, but the marker ' . $path . ' could not be removed, so '
+                    . 'the breaker stays open and one request retries every 30 seconds. Make its directory writable '
+                    . 'again, or remove that file.',
+                    ['exception' => $e]
+                );
 
                 return;
             }
@@ -276,20 +281,25 @@ class Breaker implements ResetAfterRequestInterface
     }
 
     /**
-     * Touches the marker where it can be written, and says where: "var", "temp", or null when nowhere.
+     * Touches the marker in var/, or in the fallback once var/ has refused it, and says where: "var", "temp" or null.
      */
     private function touch(string $kind): ?string
     {
-        foreach ($this->paths($kind, true) as $where => $path) {
-            try {
-                if ($this->file->touch($path, $this->clock->now())) {
-                    return $where;
-                }
-            } catch (Throwable) {
-                continue;
-            }
+        if ($this->touched($this->paths($kind)['var'])) {
+            return 'var';
         }
 
-        return null;
+        $fallback = $this->paths($kind, true)['temp'] ?? '';
+
+        return $fallback !== '' && $this->touched($fallback) ? 'temp' : null;
+    }
+
+    private function touched(string $path): bool
+    {
+        try {
+            return (bool) $this->file->touch($path, $this->clock->now());
+        } catch (Throwable) {
+            return false;
+        }
     }
 }

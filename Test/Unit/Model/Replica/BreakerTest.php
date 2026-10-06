@@ -136,6 +136,37 @@ class BreakerTest extends SplitAdapterTestCase
         $this->assertFalse($this->breaker()->allowsAttempt());
     }
 
+    public function testWithVarWritableNothingIsMadeUnderTheTempDirectory(): void
+    {
+        $this->breaker()->trip('invented reason');
+        $this->breaker()->claimHealthCheck();
+
+        $this->assertCount(2, $this->markers());
+        $this->assertSame([], glob($this->tempDir . '/*') ?: []);
+    }
+
+    /**
+     * A store whose var/ turned read-only with the breaker open is told which file is in the way, once per retry.
+     */
+    public function testAMarkerThatCannotBeRemovedIsNamedInTheWarningAndKeepsTheBreakerOpen(): void
+    {
+        $this->breaker()->trip('invented reason');
+        $marker = $this->varDir . '/' . $this->markers()[0];
+        $this->clock->advance(30);
+        chmod($this->varDir, 0500);
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->once())->method('warning')->with($this->stringContains($marker));
+        $this->logger->expects($this->never())->method('notice');
+
+        $probe = $this->breaker();
+        $this->assertTrue($probe->allowsAttempt());
+        $probe->recordSuccess();
+
+        chmod($this->varDir, 0700);
+        $this->assertFileExists($marker);
+        $this->assertFalse($this->breaker()->allowsAttempt(), 'The retry claimed the next thirty seconds');
+    }
+
     /**
      * Every account on a host can write the system temp directory, so the markers there go where only this one can.
      */
