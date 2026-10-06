@@ -106,16 +106,16 @@ class Breaker implements ResetAfterRequestInterface
     }
 
     /**
-     * Whether whoever asks can see the markers the web server keeps: false when var/ is not theirs to write, since
-     * the web server then keeps its markers in a directory of its own that another user looks past.
+     * Where the web server may keep markers that whoever asks does not look: var/ when it is not theirs to read, or
+     * a directory under the fallback named for another user. Empty when every place is in view.
      */
-    public function isSeenFromHere(): bool
+    public function hiddenFromHere(): string
     {
-        try {
-            return $this->file->isWritable((string) $this->directoryList->getPath(DirectoryList::VAR_DIR));
-        } catch (Throwable) {
-            return false;
-        }
+        $var = (string) $this->directoryList->getPath(DirectoryList::VAR_DIR);
+
+        return $this->ownDirectory->isOutOfReach($var)
+            ? $var
+            : $this->ownDirectory->namedForAnotherUserUnder($this->fallbackBase(), $this->markerName);
     }
 
     /**
@@ -261,11 +261,15 @@ class Breaker implements ResetAfterRequestInterface
     private function ownFallbackDirectory(bool $make): string
     {
         if ($this->ownFallbackDirectory === '') {
-            $base = $this->fallbackDirectory !== '' ? $this->fallbackDirectory : sys_get_temp_dir();
-            $this->ownFallbackDirectory = $this->ownDirectory->under($base, $this->markerName, $make);
+            $this->ownFallbackDirectory = $this->ownDirectory->under($this->fallbackBase(), $this->markerName, $make);
         }
 
         return $this->ownFallbackDirectory;
+    }
+
+    private function fallbackBase(): string
+    {
+        return $this->fallbackDirectory !== '' ? $this->fallbackDirectory : sys_get_temp_dir();
     }
 
     /**

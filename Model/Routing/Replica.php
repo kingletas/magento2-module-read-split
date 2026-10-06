@@ -28,6 +28,11 @@ class Replica
      */
     private const int STATEMENT_RAN_TOO_LONG = 1969;
 
+    /**
+     * The refusals whose message names a database, a table, a column, a routine or a grant, and never the statement.
+     */
+    private const array NAMES_AN_OBJECT_OR_A_GRANT = [1044, 1049, 1054, 1142, 1143, 1146, 1305, 1370];
+
     private ?ReplicaConnectionInterface $connection = null;
 
     private bool $available = true;
@@ -42,7 +47,7 @@ class Replica
     private string $failed = '';
 
     /**
-     * The server's own words for a statement it refused as wrong for it, until the primary shows it was only here.
+     * What the server said of a statement it refused as wrong for it, until the primary shows it was only here.
      */
     private string $refused = '';
 
@@ -139,7 +144,7 @@ class Replica
             $this->breaker->warnOccasionally(
                 'refused',
                 'Read split: the replica refused a statement the primary answered, so the primary answers the rest '
-                . 'of that request. The replica stays in use. Its words: ' . $this->refused . ' This is said at most '
+                . 'of that request. The replica stays in use. It said: ' . $this->refused . '. This is said at most '
                 . 'once an hour on this node.'
             );
             $this->refused = '';
@@ -248,11 +253,25 @@ class Replica
     {
         for ($cause = $failure; $cause !== null; $cause = $cause->getPrevious()) {
             if ($cause instanceof PDOException && str_starts_with((string) ($cause->errorInfo[0] ?? ''), '42')) {
-                return trim((string) ($cause->errorInfo[2] ?? $cause->getMessage()));
+                return $this->refusalWords($cause);
             }
         }
 
         return '';
+    }
+
+    /**
+     * The server's message only where it names an object or a grant; any other can quote the statement, and with it
+     * a shopper's data, so that one is told by its numbers alone.
+     */
+    private function refusalWords(PDOException $refusal): string
+    {
+        $code = (int) ($refusal->errorInfo[1] ?? 0);
+        $words = rtrim(trim((string) ($refusal->errorInfo[2] ?? '')), '.');
+
+        return in_array($code, self::NAMES_AN_OBJECT_OR_A_GRANT, true) && $words !== ''
+            ? $words
+            : 'error ' . $code . ', SQLSTATE ' . $refusal->errorInfo[0];
     }
 
     private function sayAStatementRanTooLong(): void

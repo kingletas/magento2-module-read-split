@@ -146,7 +146,7 @@ abstract class SplitAdapterTestCase extends TestCase
             $file ?? new File(),
             $this->clock,
             $this->logger,
-            new OwnDirectory(new File()),
+            new OwnDirectory($file ?? new File()),
             'kingletas_read_split',
             $this->tempDir
         );

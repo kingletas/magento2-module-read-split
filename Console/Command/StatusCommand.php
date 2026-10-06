@@ -77,10 +77,13 @@ class StatusCommand extends Command
 
         $breaker = $this->breaker->withReplicaHost($host . ':' . $port);
 
-        if (!$breaker->isSeenFromHere()) {
+        $hidden = $breaker->hiddenFromHere();
+
+        if ($hidden !== '') {
             $output->writeln((string) __(
-                'Breaker: unknown from here. var/ is not writable by this user, so the web server keeps its markers '
-                . 'in a directory of its own under the system temp directory. Run this as the web server\'s user.'
+                'Breaker: unknown from here. The web server may keep its markers in %1, where this user does not '
+                . 'look. Run this as the web server\'s user.',
+                $hidden
             ));
 
             return;

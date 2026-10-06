@@ -352,7 +352,11 @@ class SettingsReaderTest extends TestCase
             ],
             'a replica password that is not text' => [
                 ['replica' => $replica + ['password' => 12345]],
-                'replica.password takes text, and got 12345',
+                'replica.password takes text, and got something that is not text',
+            ],
+            'a replica user that is not text' => [
+                ['replica' => $replica + ['username' => 7]],
+                'replica.username takes text, and got 7',
             ],
             'tables that are not a list' => [['primary_only_tables' => 'session'], 'primary_only_tables takes a list'],
             'a table name with a typo' => [
@@ -392,6 +396,21 @@ class SettingsReaderTest extends TestCase
         $block = ['replica' => ['host' => 'db-replica.example', 'password' => 'invented-secret'], 'pooled' => 'yes'];
 
         $this->assertStringNotContainsString('invented-secret', $this->read($block)->reason());
+    }
+
+    /**
+     * A password written without its quotes is a number, and the refusal once printed it into the log.
+     */
+    public function testAReplicaPasswordOfTheWrongKindIsRefusedWithoutBeingShown(): void
+    {
+        foreach ([90210417, 9021.0417, ['invented-secret']] as $password) {
+            $settings = $this->read(['replica' => ['host' => 'db-replica.example', 'password' => $password]]);
+
+            $this->assertSame(SettingsState::Refused, $settings->state());
+            $this->assertStringContainsString('replica.password takes text', $settings->reason());
+            $this->assertStringNotContainsString('9021', $settings->reason());
+            $this->assertStringNotContainsString('invented-secret', $settings->reason());
+        }
     }
 
     public function testConfiguredTablesAndPatternsAreAddedToTheDefaultsWithThePrefix(): void

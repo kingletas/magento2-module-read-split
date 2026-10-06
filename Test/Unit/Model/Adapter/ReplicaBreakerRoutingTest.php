@@ -111,6 +111,35 @@ class ReplicaBreakerRoutingTest extends SplitAdapterTestCase
         $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM store'));
     }
 
+    /**
+     * A syntax error's message quotes the statement, and a statement can carry a shopper's email or address.
+     */
+    public function testARefusalWhoseMessageCanQuoteTheStatementIsToldByItsNumbersAlone(): void
+    {
+        $words = "You have an error in your SQL syntax; check the manual near 'invented.shopper@example.com' at line 1";
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->once())->method('warning')->with($this->logicalAnd(
+            $this->stringContains('It said: error 1064, SQLSTATE 42000. This is said'),
+            $this->logicalNot($this->stringContains('invented.shopper'))
+        ));
+        $this->replica->failOn = '/invented_report/';
+        $this->replica->failWith = $this->databaseError(1064, '42000', $words);
+
+        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM invented_report'));
+        $this->assertSame([], $this->breakerMarkers(), 'It is still the statement at fault, whatever is logged');
+    }
+
+    public function testARefusalThatNamesAnObjectButCameWithoutWordsIsToldByItsNumbers(): void
+    {
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->once())->method('warning')
+            ->with($this->stringContains('It said: error 1146, SQLSTATE 42S02. This is said'));
+        $this->replica->failOn = '/invented_report/';
+        $this->replica->failWith = $this->databaseError(1146, '42S02', '');
+
+        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM invented_report'));
+    }
+
     public function testAStatementBothServersRefuseSaysNothingAboutTheReplica(): void
     {
         $this->logger = $this->createMock(LoggerInterface::class);

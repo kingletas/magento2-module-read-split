@@ -115,7 +115,8 @@ class SettingsCheck
             }
 
             if (!is_string($value)) {
-                return 'replica.' . $key . ' takes text, and got ' . $this->shown($value);
+                return 'replica.' . $key . ' takes text, and got '
+                    . ($key === 'password' ? 'something that is not text' : $this->shown($value));
             }
         }
 
@@ -139,7 +140,7 @@ class SettingsCheck
     }
 
     /**
-     * A value as a refusal shows it, cut short. A replica's password that is text is no mistake, so never shown.
+     * A value as a refusal shows it, cut short. A replica's password is never handed to this, whatever its kind.
      */
     private function shown(mixed $value): string
     {

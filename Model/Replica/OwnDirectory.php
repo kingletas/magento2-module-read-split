@@ -13,7 +13,7 @@ use Magento\Framework\Filesystem\Driver\File;
 use Throwable;
 
 /**
- * Finds, under a directory every account on the host can write, the one directory only this user can.
+ * Tells which of the places markers are kept is this user's alone, and which is out of this user's sight.
  */
 class OwnDirectory
 {
@@ -44,6 +44,44 @@ class OwnDirectory
         } catch (Throwable) {
             return '';
         }
+    }
+
+    /**
+     * True for a directory that is there and that this user cannot read, or cannot be asked about.
+     */
+    public function isOutOfReach(string $directory): bool
+    {
+        try {
+            return $this->file->isExists($directory) && !$this->file->isReadable($directory);
+        } catch (Throwable) {
+            return true;
+        }
+    }
+
+    /**
+     * A directory under the base named for another user, whose markers this user's look leaves out, or empty.
+     */
+    public function namedForAnotherUserUnder(string $base, string $name): string
+    {
+        if (!function_exists('posix_geteuid')) {
+            return '';
+        }
+
+        $prefix = rtrim($base, '/') . '/' . $name . '-';
+
+        try {
+            foreach ($this->file->search($name . '-*', $base) as $found) {
+                $user = substr((string) $found, strlen($prefix));
+
+                if (ctype_digit($user) && (int) $user !== posix_geteuid() && is_dir((string) $found)) {
+                    return (string) $found;
+                }
+            }
+        } catch (Throwable) {
+            return '';
+        }
+
+        return '';
     }
 
     private function isThisUsersAlone(string $directory, int $user): bool

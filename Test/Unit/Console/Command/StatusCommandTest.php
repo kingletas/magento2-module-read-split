@@ -12,6 +12,7 @@ namespace Kingletas\ReadSplit\Test\Unit\Console\Command;
 use Kingletas\ReadSplit\Console\Command\StatusCommand;
 use Kingletas\ReadSplit\Model\SettingsReader;
 use Kingletas\ReadSplit\Test\Support\SplitAdapterTestCase;
+use Magento\Framework\Filesystem\Driver\File;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -53,18 +54,82 @@ class StatusCommandTest extends SplitAdapterTestCase
     }
 
     /**
-     * Run by a deploy user who cannot write var/, it once printed "closed" while the web server's breaker was open.
+     * Run by a user other than the one whose markers sit under the temp directory, it once printed "closed" while
+     * that user's breaker was open.
      */
-    public function testWhenVarIsNotTheCallersTheBreakerIsSaidToBeUnknownFromHere(): void
+    public function testAnotherUsersMarkerDirectoryMakesTheBreakerUnknownFromHere(): void
     {
-        $this->makeVarUnwritable();
+        $theirs = $this->tempDir . '/kingletas_read_split-' . (posix_geteuid() + 1);
+        mkdir($theirs, 0700);
 
         $tester = $this->runCommand(['replica' => ['host' => 'db-replica.example']]);
 
         $this->assertSame(Command::SUCCESS, $tester->getStatusCode());
         $this->assertStringContainsString('active', $tester->getDisplay());
         $this->assertStringContainsString('Breaker: unknown from here', $tester->getDisplay());
+        $this->assertStringContainsString($theirs, $tester->getDisplay());
         $this->assertStringNotContainsString('closed', $tester->getDisplay());
+    }
+
+    public function testAVarDirectoryTheCallerCannotReadMakesTheBreakerUnknownFromHere(): void
+    {
+        $unreadable = new class extends File {
+            public function isReadable($path)
+            {
+                return false;
+            }
+        };
+
+        $display = $this->runCommand(['replica' => ['host' => 'db-replica.example']], $unreadable)->getDisplay();
+
+        $this->assertStringContainsString('Breaker: unknown from here', $display);
+        $this->assertStringContainsString($this->varDir, $display);
+        $this->assertStringNotContainsString('closed', $display);
+    }
+
+    /**
+     * A web server that owns var/ keeps its markers there, where a deploy user who cannot write var/ still reads them.
+     */
+    public function testACallerWhoCannotWriteVarStillReadsTheMarkersKeptThere(): void
+    {
+        $this->breaker()->withReplicaHost('db-replica.example:3306')->trip('invented reason');
+        $readOnly = new class extends File {
+            public function isWritable($path)
+            {
+                return false;
+            }
+
+            public function touch($path, $modificationTime = null)
+            {
+                return false;
+            }
+        };
+
+        $display = $this->runCommand(['replica' => ['host' => 'db-replica.example']], $readOnly)->getDisplay();
+
+        $this->assertStringContainsString('Breaker: open', $display);
+        $this->assertStringContainsString('var/', $display);
+    }
+
+    public function testThisUsersOwnDirectoryUnderTheTempDirectoryIsInView(): void
+    {
+        $this->makeVarUnwritable();
+        $this->breaker()->withReplicaHost('db-replica.example:3306')->trip('invented reason');
+
+        $display = $this->runCommand(['replica' => ['host' => 'db-replica.example']])->getDisplay();
+
+        $this->assertStringContainsString('Breaker: open', $display);
+        $this->assertStringContainsString('the system temp directory', $display);
+        $this->assertStringNotContainsString('unknown', $display);
+    }
+
+    public function testAFileNamedLikeAnotherUsersDirectoryIsNotOne(): void
+    {
+        touch($this->tempDir . '/kingletas_read_split-' . (posix_geteuid() + 1));
+
+        $display = $this->runCommand(['replica' => ['host' => 'db-replica.example']])->getDisplay();
+
+        $this->assertStringContainsString('Breaker: closed', $display);
     }
 
     public function testAConfiguredBlockThatIsNotInUseFailsWithTheReason(): void
@@ -107,11 +172,11 @@ class StatusCommandTest extends SplitAdapterTestCase
     /**
      * @param array<string, mixed>|null $block
      */
-    private function runCommand(?array $block): CommandTester
+    private function runCommand(?array $block, ?File $file = null): CommandTester
     {
         $command = new StatusCommand(
             new SettingsReader($this->deploymentConfig('', $block)),
-            $this->breaker(),
+            $this->breaker($file),
             'kingletas:read-split:status'
         );
         $tester = new CommandTester($command);
