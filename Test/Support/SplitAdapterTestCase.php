@@ -13,6 +13,7 @@ use Kingletas\ReadSplit\Model\Adapter\ReadSplitMysql;
 use Kingletas\ReadSplit\Model\Gtid\GtidPosition;
 use Kingletas\ReadSplit\Model\Gtid\PositionCookie;
 use Kingletas\ReadSplit\Model\Replica\Breaker;
+use Kingletas\ReadSplit\Model\Replica\OwnDirectory;
 use Kingletas\ReadSplit\Model\Replica\ReplicationStatus;
 use Kingletas\ReadSplit\Model\Request\WriteLedger;
 use Kingletas\ReadSplit\Model\Routing\RouterFactory;
@@ -113,6 +114,12 @@ abstract class SplitAdapterTestCase extends TestCase
     protected function tearDown(): void
     {
         foreach ($this->varDirs as $dir) {
+            foreach (glob($dir . '/kingletas_read_split-*', GLOB_ONLYDIR) ?: [] as $own) {
+                chmod($own, 0700);
+                array_map('unlink', glob($own . '/*') ?: []);
+                rmdir($own);
+            }
+
             array_map('unlink', glob($dir . '/*') ?: []);
 
             if (is_dir($dir)) {
@@ -139,6 +146,7 @@ abstract class SplitAdapterTestCase extends TestCase
             $file ?? new File(),
             $this->clock,
             $this->logger,
+            new OwnDirectory(new File()),
             'kingletas_read_split',
             $this->tempDir
         );
@@ -153,6 +161,22 @@ abstract class SplitAdapterTestCase extends TestCase
     {
         array_map('unlink', glob($this->varDir . '/*') ?: []);
         rmdir($this->varDir);
+    }
+
+    /**
+     * This user's own directory under the temp directory, the only place there the breaker believes a marker.
+     */
+    protected function fallbackDir(): string
+    {
+        return $this->tempDir . '/kingletas_read_split-' . posix_geteuid();
+    }
+
+    /**
+     * @return string[] the breaker's marker files where it falls back when var/ cannot be written
+     */
+    protected function fallbackMarkers(): array
+    {
+        return $this->markersIn($this->fallbackDir());
     }
 
     /**
@@ -292,7 +316,7 @@ abstract class SplitAdapterTestCase extends TestCase
     protected function arriveWithPosition(string $position, int $secondsAgo = 1): void
     {
         $this->clock->advance(-$secondsAgo);
-        $this->positionCookie()->write($position, 30);
+        $this->positionCookie()->write($position, 60);
         $this->clock->advance($secondsAgo);
         $this->cookies->nextRequest();
     }

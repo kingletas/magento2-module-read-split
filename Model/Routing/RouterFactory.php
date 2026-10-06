@@ -44,8 +44,9 @@ class RouterFactory
         if ($settings->positionLifetimeWasRaised()) {
             $breaker->warnOccasionally(
                 'lifetime',
-                'Read split: position_lifetime is shorter than max_lag, so it is raised to '
-                . $settings->positionLifetime() . ' seconds; set it to at least max_lag in env.php.'
+                'Read split: position_lifetime is shorter than max_lag plus the 30 seconds between replication '
+                . 'checks, so it is raised to ' . $settings->positionLifetime() . ' seconds; set it to at least that '
+                . 'in env.php, or leave it out.'
             );
         }
 

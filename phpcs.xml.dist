@@ -81,6 +81,11 @@
     -->
     <rule ref="Magento2.Functions.DiscouragedFunction">
         <exclude-pattern>Model/Replica/NetReadTimeout.php</exclude-pattern>
+        <!--
+            Whose a directory is, and whether it is a link, are questions
+            Magento's file driver cannot answer, so this one class asks PHP.
+        -->
+        <exclude-pattern>Model/Replica/OwnDirectory.php</exclude-pattern>
     </rule>
 
     <!--

@@ -20,12 +20,12 @@ class Classifier
     private const string NOT_PLAIN = '/\bFOR\s+UPDATE\b|\bFOR\s+SHARE\b|\bLOCK\s+IN\s+SHARE\s+MODE\b'
         . '|\bINTO\b|:=|@@|\bSQL_CALC_FOUND_ROWS\b|\bPREVIOUS\s+VALUE\s+FOR\b'
         . '|\b(?:GET_LOCK|RELEASE_LOCK|RELEASE_ALL_LOCKS|IS_FREE_LOCK|IS_USED_LOCK|LAST_INSERT_ID|FOUND_ROWS'
-        . '|ROW_COUNT|LASTVAL|MASTER_GTID_WAIT|MASTER_POS_WAIT|SLEEP|BENCHMARK)\s*\(/i';
+        . '|ROW_COUNT|LASTVAL|MASTER_GTID_WAIT|MASTER_POS_WAIT|SLEEP|BENCHMARK)`?\s*\(/i';
 
     /**
      * A SELECT that moves a sequence on writes to it.
      */
-    private const string SEQUENCE_WRITE = '/\b(?:NEXTVAL|SETVAL)\s*\(|\bNEXT\s+VALUE\s+FOR\b/i';
+    private const string SEQUENCE_WRITE = '/\b(?:NEXTVAL|SETVAL)`?\s*\(|\bNEXT\s+VALUE\s+FOR\b/i';
 
     private const array METADATA_READS = ['SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN'];
 

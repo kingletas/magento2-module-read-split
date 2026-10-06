@@ -29,6 +29,20 @@ class InactiveSettingsTest extends SplitAdapterTestCase
         $this->assertSame([], $this->markersIn($this->tempDir));
     }
 
+    /**
+     * A block naming another connection would split reads and hand no position on, so nothing is split at all.
+     */
+    public function testABlockNamingAnotherConnectionSplitsNothingAndRecordsNoWrite(): void
+    {
+        $adapter = $this->adapter(['connection' => 'checkout']);
+
+        $this->assertFalse($adapter->readSplitSettings()->isActive());
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM store'));
+        $adapter->insert('invented_table', ['id' => 1]);
+        $this->assertSame(0, $this->replica->connects);
+        $this->assertFalse($this->ledger->hasWritten());
+    }
+
     public function testActiveSettingsStillSendPlainReadsToTheReplica(): void
     {
         $adapter = $this->adapter();

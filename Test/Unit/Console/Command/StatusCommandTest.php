@@ -57,6 +57,15 @@ class StatusCommandTest extends SplitAdapterTestCase
         $this->assertStringContainsString('replica host', $tester->getDisplay());
     }
 
+    public function testABlockNamingAnotherConnectionFailsAndSaysOnlyTheDefaultCanBeSplit(): void
+    {
+        $tester = $this->runCommand(['connection' => 'checkout', 'replica' => ['host' => 'db-replica.example']]);
+
+        $this->assertSame(Command::FAILURE, $tester->getStatusCode());
+        $this->assertStringContainsString('not in use', $tester->getDisplay());
+        $this->assertStringContainsString('only the default connection can be split', $tester->getDisplay());
+    }
+
     public function testAStoreWithoutTheBlockPasses(): void
     {
         $tester = $this->runCommand(null);

@@ -41,6 +41,11 @@ class ClassifierTest extends TestCase
             'nothing at all' => ['', StatementKind::Write],
             'a lock function in lower case' => ["select get_lock('invented', 1)", StatementKind::PinningRead],
             'a column named like a lock function' => ['SELECT invented_get_lock_count FROM store', StatementKind::Read],
+            'a lock function with its name quoted' => ["SELECT `get_lock` ('invented', 1)", StatementKind::PinningRead],
+            'a sequence function with its name quoted' => ['SELECT `NEXTVAL`(invented_sequence)', StatementKind::Write],
+            'a column quoted beside a bracket' => ['SELECT `invented_get_lock` FROM (SELECT 1) t', StatementKind::Read],
+            'a user variable set from a function' => ['SET @invented = CONNECTION_ID()', StatementKind::Write],
+            'a user variable set from arithmetic' => ['SET @invented = 2 + 3', StatementKind::SessionState],
             'SET with nothing after it' => ['SET', StatementKind::Write],
             'SET NAMES in lower case' => ['set names utf8mb4', StatementKind::SessionState],
             'a SET value with a comma in parentheses' => [

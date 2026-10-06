@@ -19,7 +19,8 @@ class SessionStateSet
     private const array PREFIXES = ['character_set_', 'collation_'];
 
     /**
-     * True when every assignment in the SET is on the allow-list and none reads a table to get its value.
+     * True when every assignment in the SET is on the allow-list and none reads a table or calls a function for
+     * its value.
      */
     public function isSessionState(string $executable): bool
     {
@@ -44,8 +45,13 @@ class SessionStateSet
             return false;
         }
 
-        if (preg_match('/^NAMES\s/i', $assignment) === 1 || preg_match('/^@(?!@)[\w$.]+\s*:?=/', $assignment) === 1) {
+        if (preg_match('/^NAMES\s/i', $assignment) === 1) {
             return true;
+        }
+
+        if (preg_match('/^@(?!@)[\w$.]+\s*:?=/', $assignment) === 1) {
+            // A function can answer differently on each server, and a lock taken this way is held on one of them.
+            return !str_contains($assignment, '(');
         }
 
         $variable = '/^(?:(?:SESSION|LOCAL)\s+|@@(?:SESSION\.|LOCAL\.)?)?`?([a-z_]+)`?\s*:?=/i';

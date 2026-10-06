@@ -21,7 +21,10 @@ use Throwable;
  */
 class Breaker implements ResetAfterRequestInterface
 {
-    private const int WINDOW = 30;
+    /**
+     * Seconds the breaker stays open before one retry, and the least between two questions about replication.
+     */
+    public const int WINDOW = 30;
 
     private const int QUIET = 3600;
 
@@ -30,13 +33,19 @@ class Breaker implements ResetAfterRequestInterface
     private string $replicaHost = '';
 
     /**
-     * @param string $fallbackDirectory where markers go when var/ cannot be written, empty for the system temp dir
+     * This user's own directory under the fallback once it has been checked, so a request checks it once.
+     */
+    private string $ownFallbackDirectory = '';
+
+    /**
+     * @param string $fallbackDirectory under which markers go when var/ cannot be written, empty for the temp dir
      */
     public function __construct(
         private readonly DirectoryList $directoryList,
         private readonly File $file,
         private readonly Clock $clock,
         private readonly LoggerInterface $logger,
+        private readonly OwnDirectory $ownDirectory,
         private readonly string $markerName = 'kingletas_read_split',
         private readonly string $fallbackDirectory = ''
     ) {
@@ -119,8 +128,8 @@ class Breaker implements ResetAfterRequestInterface
 
         if ($where === null) {
             $this->logger->warning(
-                'Read split: neither var/ nor the system temp directory can be written, so there is no breaker '
-                . 'and every request tries the replica: ' . $reason . '.'
+                'Read split: neither var/ nor a directory of this user\'s own under the system temp directory can be '
+                . 'written, so there is no breaker and every request tries the replica: ' . $reason . '.'
             );
 
             return;
@@ -197,23 +206,40 @@ class Breaker implements ResetAfterRequestInterface
     }
 
     /**
-     * The marker in var/ first, then in the fallback directory.
+     * The marker in var/ first, then in this user's own directory under the fallback, when there is one to trust.
      *
      * @return array<string, string>
      */
-    private function paths(string $kind): array
+    private function paths(string $kind, bool $toWrite = false): array
     {
         $name = $this->markerName . '-' . substr(
             hash('sha256', $this->directoryList->getRoot() . "\0" . $this->replicaHost),
             0,
             16
         ) . '.' . $kind;
-        $fallback = $this->fallbackDirectory !== '' ? $this->fallbackDirectory : sys_get_temp_dir();
+        $paths = ['var' => rtrim((string) $this->directoryList->getPath(DirectoryList::VAR_DIR), '/') . '/' . $name];
+        $own = $this->ownFallbackDirectory($toWrite);
 
-        return [
-            'var' => rtrim((string) $this->directoryList->getPath(DirectoryList::VAR_DIR), '/') . '/' . $name,
-            'temp' => rtrim($fallback, '/') . '/' . $name,
-        ];
+        if ($own !== '') {
+            $paths['temp'] = $own . '/' . $name;
+        }
+
+        return $paths;
+    }
+
+    /**
+     * The directory under the fallback that only this user can write, made when a marker is about to be written:
+     * any account on the host can write the system temp directory, so a marker is believed only where no other
+     * account could have put it.
+     */
+    private function ownFallbackDirectory(bool $make): string
+    {
+        if ($this->ownFallbackDirectory === '') {
+            $base = $this->fallbackDirectory !== '' ? $this->fallbackDirectory : sys_get_temp_dir();
+            $this->ownFallbackDirectory = $this->ownDirectory->under($base, $this->markerName, $make);
+        }
+
+        return $this->ownFallbackDirectory;
     }
 
     /**
@@ -245,7 +271,8 @@ class Breaker implements ResetAfterRequestInterface
             }
         }
 
-        return $ages;
+        // A marker dated in the future would hold its place for as long as it says, so it counts as no marker.
+        return array_filter($ages, static fn (int $age): bool => $age >= 0);
     }
 
     /**
@@ -253,7 +280,7 @@ class Breaker implements ResetAfterRequestInterface
      */
     private function touch(string $kind): ?string
     {
-        foreach ($this->paths($kind) as $where => $path) {
+        foreach ($this->paths($kind, true) as $where => $path) {
             try {
                 if ($this->file->touch($path, $this->clock->now())) {
                     return $where;

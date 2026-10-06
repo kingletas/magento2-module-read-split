@@ -15,6 +15,7 @@ use Kingletas\ReadSplit\Model\Replica\ReplicaConnectorInterface;
 use Kingletas\ReadSplit\Model\Replica\ReplicationStatus;
 use Magento\Framework\DB\LoggerInterface as DbLogger;
 use Magento\Framework\DB\SelectFactory;
+use PDOException;
 use Throwable;
 
 /**
@@ -22,6 +23,11 @@ use Throwable;
  */
 class Replica
 {
+    /**
+     * MariaDB's error for a statement it stopped because it ran past max_statement_time.
+     */
+    private const int STATEMENT_RAN_TOO_LONG = 1969;
+
     private ?ReplicaConnectionInterface $connection = null;
 
     private bool $available = true;
@@ -94,9 +100,16 @@ class Replica
 
         try {
             return $this->connection?->query($sql, $bind);
-        } catch (Throwable) {
+        } catch (Throwable $failure) {
             $this->close();
             $this->available = false;
+
+            if ($this->ranTooLong($failure)) {
+                $this->sayAStatementRanTooLong();
+
+                return null;
+            }
+
             $this->unconfirmedFailure = true;
 
             return null;
@@ -186,6 +199,30 @@ class Replica
         }
 
         $this->breaker->recordSuccess();
+    }
+
+    /**
+     * A statement stopped for running too long says something about the query, not about the replica.
+     */
+    private function ranTooLong(Throwable $failure): bool
+    {
+        for ($cause = $failure; $cause !== null; $cause = $cause->getPrevious()) {
+            if ($cause instanceof PDOException && (int) ($cause->errorInfo[1] ?? 0) === self::STATEMENT_RAN_TOO_LONG) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function sayAStatementRanTooLong(): void
+    {
+        $this->breaker->warnOccasionally(
+            'slow',
+            'Read split: the replica stopped a statement that ran past ' . max(1, $this->readTimeout - 1)
+            . ' seconds, and the primary was asked instead. The replica stays in use; a page that slow wants a rate '
+            . 'limit in front of it. This is said at most once an hour on this node.'
+        );
     }
 
     private function giveUp(string $reason): void

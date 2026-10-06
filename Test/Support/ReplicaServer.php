@@ -14,6 +14,7 @@ use Kingletas\ReadSplit\Model\Replica\ReplicaConnectorInterface;
 use Magento\Framework\DB\LoggerInterface;
 use Magento\Framework\DB\SelectFactory;
 use RuntimeException;
+use Throwable;
 
 /**
  * The replica host, one server or a pool of backends taking turns, recording each statement and failing when told to.
@@ -45,6 +46,11 @@ class ReplicaServer implements ReplicaConnectorInterface
      * A statement matching this pattern fails on the replica.
      */
     public string $failOn = '';
+
+    /**
+     * What a failing statement throws, when the test needs a particular error rather than any.
+     */
+    public ?Throwable $failWith = null;
 
     /**
      * @var array<string, bool> backend name => whether it has caught up with the primary
@@ -102,7 +108,7 @@ class ReplicaServer implements ReplicaConnectorInterface
         $this->statements[] = ['backend' => $backend, 'sql' => $sql, 'bind' => $bind];
 
         if ($this->failOn !== '' && preg_match($this->failOn, $sql) === 1) {
-            throw new RuntimeException('The invented replica refused a statement.');
+            throw $this->failWith ?? new RuntimeException('The invented replica refused a statement.');
         }
 
         return new RowsStatement([['source' => $backend]]);

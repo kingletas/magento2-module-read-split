@@ -128,12 +128,87 @@ class BreakerTest extends SplitAdapterTestCase
         $this->clock->advance(29);
 
         $this->assertFalse($this->breaker()->allowsAttempt());
-        $this->assertCount(1, $this->markersIn($this->tempDir));
+        $this->assertCount(1, $this->fallbackMarkers());
         $this->clock->advance(1);
         $probe = $this->breaker();
         $this->assertTrue($probe->allowsAttempt());
         $probe->trip('invented reason');
         $this->assertFalse($this->breaker()->allowsAttempt());
+    }
+
+    /**
+     * Every account on a host can write the system temp directory, so the markers there go where only this one can.
+     */
+    public function testTheFallbackIsADirectoryOnlyThisUserCanWrite(): void
+    {
+        $this->makeVarUnwritable();
+
+        $this->breaker()->trip('invented reason');
+
+        $this->assertSame(posix_geteuid(), fileowner($this->fallbackDir()));
+        $this->assertSame(0700, fileperms($this->fallbackDir()) & 0777);
+        $this->assertSame([], glob($this->tempDir . '/*.breaker') ?: [], 'Nothing sits where others can write');
+    }
+
+    public function testAMarkerPlantedInTheSharedTempDirectoryItselfIsNotBelieved(): void
+    {
+        $this->makeVarUnwritable();
+        $this->breaker()->trip('invented reason');
+        $name = $this->fallbackMarkers()[0];
+        unlink($this->fallbackDir() . '/' . $name);
+
+        touch($this->tempDir . '/' . $name, $this->clock->now());
+
+        $this->assertTrue($this->breaker()->allowsAttempt());
+        unlink($this->tempDir . '/' . $name);
+    }
+
+    public function testAFallbackDirectoryThatIsALinkToSomewhereElseIsNotBelievedOrWritten(): void
+    {
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->once())->method('warning')->with($this->stringContains('no breaker'));
+        $this->makeVarUnwritable();
+        $elsewhere = $this->tempDir . '/somebody-elses';
+        mkdir($elsewhere, 0700);
+        symlink($elsewhere, $this->fallbackDir());
+
+        $this->breaker()->trip('invented reason');
+
+        $this->assertSame([], glob($elsewhere . '/*') ?: [], 'Nothing was written through the link');
+        $this->assertTrue($this->breaker()->allowsAttempt());
+        unlink($this->fallbackDir());
+        rmdir($elsewhere);
+    }
+
+    public function testAFallbackDirectoryOthersCanWriteIsNotBelieved(): void
+    {
+        $this->makeVarUnwritable();
+        $this->breaker()->trip('invented reason');
+        $this->assertFalse($this->breaker()->allowsAttempt());
+
+        chmod($this->fallbackDir(), 0777);
+        clearstatcache();
+
+        $this->assertTrue($this->breaker()->allowsAttempt(), 'Anyone could have put that marker there');
+        $this->assertFalse($this->breaker()->claimHealthCheck(), 'And nothing more is written there');
+    }
+
+    /**
+     * A marker dated ahead would hold the breaker open, or the replication check off, for as long as it said.
+     */
+    public function testAMarkerDatedInTheFutureCountsAsNoMarker(): void
+    {
+        $this->breaker()->trip('invented reason');
+        $this->breaker()->claimHealthCheck();
+
+        foreach (glob($this->varDir . '/*') ?: [] as $marker) {
+            touch($marker, $this->clock->now() + 86400);
+        }
+
+        clearstatcache();
+
+        $this->assertTrue($this->breaker()->allowsAttempt());
+        $this->assertTrue($this->breaker()->claimHealthCheck());
     }
 
     public function testARecoveryClosesAFallbackMarkerToo(): void
@@ -146,7 +221,7 @@ class BreakerTest extends SplitAdapterTestCase
 
         $probe->recordSuccess();
 
-        $this->assertSame([], $this->markersIn($this->tempDir));
+        $this->assertSame([], $this->fallbackMarkers());
         $this->assertTrue($this->breaker()->allowsAttempt());
     }
 

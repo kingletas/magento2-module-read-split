@@ -38,7 +38,7 @@ class UnwritableVarBreakerTest extends SplitAdapterTestCase
         }
 
         $this->assertSame(3, $this->replica->connects, 'One retry at 30 seconds and one at 60');
-        $this->assertNotSame([], $this->markersIn($this->tempDir));
+        $this->assertNotSame([], $this->fallbackMarkers());
     }
 
     public function testTheReplicaComesBackThroughTheFallbackMarker(): void
@@ -52,7 +52,7 @@ class UnwritableVarBreakerTest extends SplitAdapterTestCase
         $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM store'));
         $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM store'));
         $this->assertSame([], array_filter(
-            $this->markersIn($this->tempDir),
+            $this->fallbackMarkers(),
             static fn (string $name): bool => str_ends_with($name, '.breaker')
         ));
     }

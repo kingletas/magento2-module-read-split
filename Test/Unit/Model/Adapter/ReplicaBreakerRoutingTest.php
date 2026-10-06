@@ -10,9 +10,11 @@ declare(strict_types=1);
 namespace Kingletas\ReadSplit\Test\Unit\Model\Adapter;
 
 use Kingletas\ReadSplit\Test\Support\SplitAdapterTestCase;
+use PDOException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Log\LoggerInterface;
 use Throwable;
+use Zend_Db_Statement_Exception;
 
 /**
  * A dead replica, or one whose replication has stopped, is taken out of use on this node for thirty seconds, and
@@ -114,6 +116,49 @@ class ReplicaBreakerRoutingTest extends SplitAdapterTestCase
         $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity'));
         $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM store'));
         $this->assertSame(1, $this->replica->connects);
+    }
+
+    /**
+     * One slow page asked for twice a minute once kept a node's reads off the replica, with nothing said.
+     */
+    public function testAStatementTheReplicaStopsForRunningTooLongLeavesTheBreakerClosed(): void
+    {
+        $this->replica->failOn = '/invented_slow_report/';
+        $this->replica->failWith = $this->ranTooLong();
+        $slow = $this->adapter();
+
+        $this->assertSame('primary', $this->answeredBy($slow, 'SELECT * FROM invented_slow_report'));
+        $this->assertSame('primary', $this->answeredBy($slow, 'SELECT * FROM store'), 'The rest of that request');
+        $this->assertSame([], $this->breakerMarkers());
+        $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM store'), 'The next request');
+        $this->assertSame(2, $this->replica->connects);
+    }
+
+    public function testAStatementThatRanTooLongIsSaidOnceAcrossRequests(): void
+    {
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->once())->method('warning')->with($this->stringContains('ran past 4 seconds'));
+        $this->replica->failOn = '/invented_slow_report/';
+        $this->replica->failWith = $this->ranTooLong();
+
+        for ($request = 0; $request < 3; ++$request) {
+            $this->answeredBy($this->adapter(), 'SELECT * FROM invented_slow_report');
+            $this->clock->advance(40);
+        }
+    }
+
+    /**
+     * A connection lost in the middle of a statement is still the replica's fault.
+     */
+    public function testAnyOtherFailedStatementStillTripsIt(): void
+    {
+        $this->replica->failOn = '/catalog_product_entity/';
+        $this->replica->failWith = $this->databaseError(2006, 'HY000', 'MySQL server has gone away');
+
+        $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity');
+
+        $this->assertNotSame([], $this->breakerMarkers());
+        $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM store'));
     }
 
     public function testAFailedReplayTripsIt(): void
@@ -224,5 +269,32 @@ class ReplicaBreakerRoutingTest extends SplitAdapterTestCase
     private static function row(string $io, string $sql, ?string $lag): array
     {
         return ['Slave_IO_Running' => $io, 'Slave_SQL_Running' => $sql, 'Seconds_Behind_Master' => $lag];
+    }
+
+    /**
+     * The error as Magento's adapter hands it on: its own exception, with the driver's underneath.
+     */
+    private function ranTooLong(): Throwable
+    {
+        return $this->databaseError(1969, '70100', 'Query execution was interrupted (max_statement_time exceeded)');
+    }
+
+    private function databaseError(int $number, string $state, string $message): Throwable
+    {
+        $driver = new PDOException('SQLSTATE[' . $state . ']: ' . $message);
+        $driver->errorInfo = [$state, $number, $message];
+
+        return new Zend_Db_Statement_Exception($driver->getMessage(), (int) $state, $driver);
+    }
+
+    /**
+     * @return string[]
+     */
+    private function breakerMarkers(): array
+    {
+        return array_values(array_filter(
+            $this->markersIn($this->varDir),
+            static fn (string $name): bool => str_ends_with($name, '.breaker')
+        ));
     }
 }

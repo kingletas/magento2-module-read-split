@@ -64,7 +64,7 @@ class ReadAfterWriteGateTest extends SplitAdapterTestCase
     public function testAnExpiredPositionIsIgnored(): void
     {
         $this->replica->caughtUp['replica'] = false;
-        $this->arriveWithPosition('0-1-512', 31);
+        $this->arriveWithPosition('0-1-512', 61);
 
         $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity'));
         $this->assertSame(0, $this->replica->gtidChecks());
@@ -133,7 +133,7 @@ class ReadAfterWriteGateTest extends SplitAdapterTestCase
 
     public function testPooledReleasesTheVisitorOnceThePositionExpires(): void
     {
-        $this->arriveWithPosition('0-1-512', 31);
+        $this->arriveWithPosition('0-1-512', 61);
 
         $this->assertSame('replica', $this->answeredBy($this->adapter(['pooled' => true]), 'SELECT * FROM cms_page'));
     }

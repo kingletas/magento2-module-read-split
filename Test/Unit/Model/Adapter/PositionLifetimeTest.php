@@ -13,11 +13,11 @@ use Kingletas\ReadSplit\Test\Support\SplitAdapterTestCase;
 use Psr\Log\LoggerInterface;
 
 /**
- * A position shorter than max_lag lost a cart on the store, so it is raised to max_lag, and the store is told once.
+ * A position shorter than the lag the store allows lost a cart on a store, so it is raised, and the store is told once.
  */
 class PositionLifetimeTest extends SplitAdapterTestCase
 {
-    public function testAShortLifetimeIsRaisedToMaxLagWithOneWarningAcrossRequests(): void
+    public function testAShortLifetimeIsRaisedWithOneWarningAcrossRequests(): void
     {
         $this->logger = $this->createMock(LoggerInterface::class);
         $this->logger->expects($this->once())->method('warning')->with($this->stringContains('position_lifetime'));
@@ -26,17 +26,17 @@ class PositionLifetimeTest extends SplitAdapterTestCase
 
         for ($request = 0; $request < 3; ++$request) {
             $adapter = $this->adapter(['position_lifetime' => 10, 'max_lag' => 30]);
-            $this->assertSame(30, $adapter->readSplitSettings()->positionLifetime());
+            $this->assertSame(60, $adapter->readSplitSettings()->positionLifetime());
             $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM catalog_product_entity'));
         }
     }
 
-    public function testALifetimeAtMaxLagWarnsNothing(): void
+    public function testALifetimeAtMaxLagAndOneCheckWarnsNothing(): void
     {
         $this->logger = $this->createMock(LoggerInterface::class);
         $this->logger->expects($this->never())->method('warning');
 
-        $this->answeredBy($this->adapter(['position_lifetime' => 30, 'max_lag' => 30]), 'SELECT * FROM store');
+        $this->answeredBy($this->adapter(['position_lifetime' => 60, 'max_lag' => 30]), 'SELECT * FROM store');
         $this->answeredBy($this->adapter(), 'SELECT * FROM store');
     }
 }

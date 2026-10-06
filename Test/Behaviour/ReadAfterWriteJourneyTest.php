@@ -12,7 +12,8 @@ namespace Kingletas\ReadSplit\Test\Behaviour;
 use Kingletas\ReadSplit\Test\Support\VisitorJourneyTestCase;
 
 /**
- * His warning as a visitor meets it: add to cart writes, and the pages after it must show the cart, lagging or not.
+ * Reading your own write, as a visitor meets it: add to cart writes, and the pages after it must show the cart,
+ * lagging or not.
  */
 class ReadAfterWriteJourneyTest extends VisitorJourneyTestCase
 {
@@ -79,7 +80,7 @@ class ReadAfterWriteJourneyTest extends VisitorJourneyTestCase
         $addToCart->insert('quote', ['entity_id' => 3]);
         $this->sendResponse(null);
 
-        $this->clock->advance(31);
+        $this->clock->advance(61);
         $page = $this->startRequest('GET');
 
         $this->assertSame('replica', $this->answeredBy($page, 'SELECT * FROM catalog_product WHERE entity_id = 3'));

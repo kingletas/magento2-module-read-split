@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 namespace Kingletas\ReadSplit\Model;
 
+use Kingletas\ReadSplit\Model\Replica\Breaker;
 use Magento\Framework\App\DeploymentConfig;
 use Magento\Framework\Config\ConfigOptionsListConstants;
 use PDO;
@@ -20,12 +21,33 @@ class SettingsReader
 {
     public const string PATH = 'db/read_split';
 
+    /**
+     * The one connection that can be split: the position a write hands on is read from it and carried in one cookie.
+     */
+    private const string CONNECTION = 'default';
+
     private const array REPLICA_KEYS = ['host', 'dbname', 'username', 'password'];
 
     /**
-     * Tables a stale read of which can lead Magento to write something wrong, so they are always read from the primary.
+     * Tables a stale read of which can lead Magento to write something wrong, or to accept a session or token the
+     * primary has already ended, so they are always read from the primary.
      */
-    private const array DEFAULT_PRIMARY_ONLY = ['session', 'quote*', 'quote_id_mask', 'sales_order*'];
+    private const array DEFAULT_PRIMARY_ONLY = [
+        'session',
+        'quote*',
+        'quote_id_mask',
+        'sales_order*',
+        'customer_entity',
+        'customer_visitor',
+        'oauth_token',
+        'jwt_auth_revoked',
+        'persistent_session',
+    ];
+
+    /**
+     * The longest a visitor's position is carried, unless the lag the store allows needs it carried longer.
+     */
+    private const int USUAL_LONGEST_LIFETIME = 300;
 
     private readonly ConnectionIdentity $connectionIdentity;
 
@@ -56,13 +78,19 @@ class SettingsReader
             return new Settings(SettingsState::SwitchedOff);
         }
 
-        $name = is_string($block['connection'] ?? null) ? $block['connection'] : 'default';
-        $target = $this->deploymentConfig->get('db/connection/' . $name);
+        if (($block['connection'] ?? self::CONNECTION) !== self::CONNECTION) {
+            return new Settings(
+                SettingsState::Refused,
+                'db/read_split names a connection other than "default", and only the default connection can be split'
+            );
+        }
+
+        $target = $this->deploymentConfig->get('db/connection/' . self::CONNECTION);
 
         if (!is_array($target)) {
             return new Settings(
                 SettingsState::Refused,
-                'db/connection/' . $name . ', the connection db/read_split splits, does not exist'
+                'db/connection/default, the connection db/read_split splits, does not exist'
             );
         }
 
@@ -78,9 +106,7 @@ class SettingsReader
      */
     public function forTarget(): Settings
     {
-        $block = $this->deploymentConfig->get(self::PATH);
-        $name = is_array($block) && is_string($block['connection'] ?? null) ? $block['connection'] : 'default';
-        $target = $this->deploymentConfig->get('db/connection/' . $name);
+        $target = $this->deploymentConfig->get('db/connection/' . self::CONNECTION);
 
         return $this->read(is_array($target) ? $target : []);
     }
@@ -106,16 +132,18 @@ class SettingsReader
 
         $maxLag = $this->bounded($block['max_lag'] ?? null, 30, 1, 86400);
         $lifetime = $this->number($block['position_lifetime'] ?? null);
+        // Lag is asked once per window, so a replica in use can be the allowed lag and one window behind.
+        $shortest = $maxLag + Breaker::WINDOW;
 
         return new Settings(
             state: SettingsState::Active,
             replicaConfig: $replica,
             pooled: ($block['pooled'] ?? false) === true,
             primaryOnlyTables: $this->primaryOnlyTables($block['primary_only_tables'] ?? []),
-            positionLifetime: $lifetime === null || $lifetime < $maxLag ? $maxLag : min($lifetime, 300),
+            positionLifetime: max($shortest, min($lifetime ?? 0, self::USUAL_LONGEST_LIFETIME)),
             maxLag: $maxLag,
             readTimeout: $this->bounded($block['read_timeout'] ?? null, 5, 1, 60),
-            positionLifetimeWasRaised: $lifetime !== null && $lifetime < $maxLag
+            positionLifetimeWasRaised: $lifetime !== null && $lifetime < $shortest
         );
     }
 

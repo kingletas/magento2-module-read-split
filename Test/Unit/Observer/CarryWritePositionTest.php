@@ -31,14 +31,14 @@ class CarryWritePositionTest extends SplitAdapterTestCase
     public function testARequestThatWroteAndIsNotCacheableCarriesThePrimarysPosition(): void
     {
         $this->primary->position = '0-1-2048';
-        $adapter = $this->adapter(['position_lifetime' => 45]);
+        $adapter = $this->adapter(['position_lifetime' => 75]);
         $adapter->insert('quote_id_mask', ['quote_id' => 3]);
 
         $this->observer($adapter)->execute($this->event('GET', 'no-store, no-cache, must-revalidate, max-age=0'));
-        $this->assertSame(45, $this->cookies->set[self::NAME]['metadata']['duration']);
+        $this->assertSame(75, $this->cookies->set[self::NAME]['metadata']['duration']);
         $this->cookies->nextRequest();
 
-        $pending = $this->positionCookie()->read(45);
+        $pending = $this->positionCookie()->read(75);
         $this->assertSame(PositionState::Pending, $pending->state());
         $this->assertSame('0-1-2048', $pending->position());
     }

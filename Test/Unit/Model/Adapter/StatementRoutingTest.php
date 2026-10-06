@@ -28,7 +28,7 @@ class StatementRoutingTest extends SplitAdapterTestCase
             'a union in parentheses' => ['(SELECT 1 AS a FROM store) UNION ALL (SELECT 2 AS a FROM store_website)'],
             'a lock phrase inside a string value' => ["SELECT * FROM search_query WHERE query_text = 'FOR UPDATE'"],
             'a lock phrase inside a comment' => ['SELECT * FROM store /* FOR UPDATE */ WHERE store_id = 1'],
-            'a column named after a listed table' => ['SELECT session_id FROM customer_visitor WHERE visitor_id = 3'],
+            'a column named after a listed table' => ['SELECT session_id FROM invented_visit_log WHERE visit_id = 3'],
             'a user variable, read' => ['SELECT @invented_counter FROM store'],
         ];
     }
@@ -50,6 +50,7 @@ class StatementRoutingTest extends SplitAdapterTestCase
             'LOCK IN SHARE MODE' => ['SELECT * FROM catalog_product_entity WHERE entity_id = 5 LOCK IN SHARE MODE'],
             'FOR SHARE' => ['SELECT * FROM catalog_product_entity WHERE entity_id = 5 FOR SHARE'],
             'GET_LOCK' => ["SELECT GET_LOCK('invented_lock', 5);"],
+            'GET_LOCK with its name quoted' => ["SELECT `GET_LOCK`('invented_lock', 5)"],
             'RELEASE_LOCK' => ["SELECT RELEASE_LOCK('invented_lock');"],
             'IS_USED_LOCK' => ["SELECT IS_USED_LOCK('invented_lock');"],
             'LAST_INSERT_ID()' => ['SELECT LAST_INSERT_ID()'],
@@ -135,6 +136,9 @@ class StatementRoutingTest extends SplitAdapterTestCase
             'SET STATEMENT ... FOR' => ['SET STATEMENT max_statement_time = 1 FOR UPDATE quote SET is_active = 0'],
             'SET CHARACTER SET' => ['SET CHARACTER SET utf8mb4'],
             'a user variable read from a table' => ['SET @invented_id = (SELECT MAX(entity_id) FROM cms_page)'],
+            'a user variable set from a function' => ['SET @invented_id = UUID()'],
+            'a lock taken into a user variable' => ["SET @invented_lock = GET_LOCK('invented_lock', 5)"],
+            'a function beside an allowed variable' => ["SET sql_mode = '', @invented_id = UUID()"],
         ];
     }
 
@@ -226,6 +230,54 @@ class StatementRoutingTest extends SplitAdapterTestCase
         $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM session WHERE session_id = 1'));
         $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM quote WHERE entity_id = 3'));
         $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM invented_logbook WHERE id = 3'));
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function readsThatDecideWhetherASessionOrTokenStillStands(): array
+    {
+        return [
+            'the customer, with the cutoff a password change writes' => [
+                'SELECT `customer_entity`.* FROM `customer_entity` WHERE (entity_id = 12)',
+            ],
+            'the visitor row a session is checked against' => ['SELECT * FROM customer_visitor WHERE visitor_id = 4'],
+            'an integration or customer token' => ['SELECT * FROM `oauth_token` WHERE (token = ?)'],
+            'a revoked web token' => ['SELECT * FROM jwt_auth_revoked WHERE user_type_id = 3 AND user_id = 12'],
+            'a persistent session' => ['SELECT * FROM persistent_session WHERE `key` = ?'],
+            'a join onto the customer' => [
+                'SELECT r.* FROM review AS r INNER JOIN customer_entity AS c ON c.entity_id = r.customer_id',
+            ],
+        ];
+    }
+
+    /**
+     * Read from a lagging replica, these would accept a session or token the primary has already ended.
+     */
+    #[DataProvider('readsThatDecideWhetherASessionOrTokenStillStands')]
+    public function testAReadThatDecidesWhetherASessionStillStandsGoesToThePrimaryWithoutPinning(string $sql): void
+    {
+        $adapter = $this->adapter();
+
+        $this->assertSame('primary', $this->answeredBy($adapter, $sql));
+        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM catalog_product_entity'));
+    }
+
+    public function testTheCustomerAttributeTablesAreStillReadFromTheReplica(): void
+    {
+        $adapter = $this->adapter();
+        $tables = [
+            'customer_entity_varchar',
+            'customer_entity_int',
+            'customer_address_entity',
+            'oauth_token_request_log',
+        ];
+
+        foreach ($tables as $table) {
+            $sql = 'SELECT * FROM ' . $table . ' WHERE entity_id = 12';
+
+            $this->assertSame('replica', $this->answeredBy($adapter, $sql), $table);
+        }
     }
 
     /**

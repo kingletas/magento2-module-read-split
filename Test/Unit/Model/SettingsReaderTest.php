@@ -102,13 +102,30 @@ class SettingsReaderTest extends TestCase
         $this->assertFalse($this->reader(['replica' => ['host' => 'db-replica.example']])->read($indexer)->isActive());
     }
 
-    public function testTheBlockCanNameTheConnectionItSplits(): void
+    /**
+     * The position a write hands on is read from the default connection, so a block naming another would split
+     * reads and never protect a visitor's own write.
+     */
+    public function testABlockNamingAnotherConnectionIsRefusedForEveryConnection(): void
     {
         $checkout = ['host' => 'db-checkout.example'] + self::DEFAULT_CONNECTION;
         $reader = $this->reader(['connection' => 'checkout', 'replica' => ['host' => 'db-replica.example']], $checkout);
 
-        $this->assertTrue($reader->read($checkout)->isActive());
-        $this->assertFalse($reader->read(self::DEFAULT_CONNECTION)->isActive());
+        foreach ([$checkout, self::DEFAULT_CONNECTION] as $connection) {
+            $settings = $reader->read($connection);
+
+            $this->assertSame(SettingsState::Refused, $settings->state());
+            $this->assertStringContainsString('only the default connection can be split', $settings->reason());
+        }
+
+        $this->assertSame(SettingsState::Refused, $reader->forTarget()->state());
+    }
+
+    public function testABlockNamingTheDefaultConnectionSplitsIt(): void
+    {
+        $reader = $this->reader(['connection' => 'default', 'replica' => ['host' => 'db-replica.example']]);
+
+        $this->assertTrue($reader->read(self::DEFAULT_CONNECTION)->isActive());
     }
 
     /**
@@ -188,13 +205,13 @@ class SettingsReaderTest extends TestCase
         $this->assertTrue($reader->read($connection)->isActive());
     }
 
-    public function testABlockNamingAConnectionThatDoesNotExistIsRefused(): void
+    public function testAConnectionNameThatIsNotAStringIsRefusedToo(): void
     {
-        $settings = $this->reader(['connection' => 'invented', 'replica' => ['host' => 'db-replica.example']])
+        $settings = $this->reader(['connection' => 7, 'replica' => ['host' => 'db-replica.example']])
             ->read(self::DEFAULT_CONNECTION);
 
         $this->assertSame(SettingsState::Refused, $settings->state());
-        $this->assertStringContainsString('db/connection/invented', $settings->reason());
+        $this->assertStringContainsString('only the default connection can be split', $settings->reason());
     }
 
     public function testTheStatesThatAreNotRefusals(): void
@@ -224,35 +241,62 @@ class SettingsReaderTest extends TestCase
 
         $this->assertFalse($settings->isPooled());
         $this->assertSame(30, $settings->maxLag());
-        $this->assertSame(30, $settings->positionLifetime(), 'A position lives as long as the replica may lag');
+        $this->assertSame(60, $settings->positionLifetime(), 'As long as the replica may lag, and one check more');
         $this->assertFalse($settings->positionLifetimeWasRaised());
         $this->assertSame(2, $settings->replicaConfig()['driver_options'][PDO::ATTR_TIMEOUT]);
         $this->assertSame(5, $settings->readTimeout());
         $this->assertSame(
-            ['session', 'quote*', 'quote_id_mask', 'sales_order*'],
+            [
+                'session',
+                'quote*',
+                'quote_id_mask',
+                'sales_order*',
+                'customer_entity',
+                'customer_visitor',
+                'oauth_token',
+                'jwt_auth_revoked',
+                'persistent_session',
+            ],
             $settings->primaryOnlyTables()
         );
     }
 
-    public function testAPositionLifetimeShorterThanMaxLagIsRaisedToIt(): void
+    /**
+     * Lag is asked once every thirty seconds, so a replica in use can be max_lag and thirty seconds behind.
+     */
+    public function testAPositionLifetimeShorterThanMaxLagAndOneCheckIsRaisedToIt(): void
     {
-        $settings = $this->read(['position_lifetime' => 10, 'max_lag' => 30]);
+        foreach ([10, 30, 59] as $configured) {
+            $settings = $this->read(['position_lifetime' => $configured, 'max_lag' => 30]);
 
-        $this->assertSame(30, $settings->positionLifetime());
-        $this->assertTrue($settings->positionLifetimeWasRaised());
+            $this->assertSame(60, $settings->positionLifetime());
+            $this->assertTrue($settings->positionLifetimeWasRaised());
+        }
     }
 
-    public function testAPositionLifetimeAtOrAboveMaxLagIsKept(): void
+    public function testAPositionLifetimeAtOrAboveMaxLagAndOneCheckIsKept(): void
     {
-        $this->assertSame(30, $this->read(['position_lifetime' => 30, 'max_lag' => 30])->positionLifetime());
-        $this->assertSame(45, $this->read(['position_lifetime' => 45, 'max_lag' => 30])->positionLifetime());
-        $this->assertFalse($this->read(['position_lifetime' => 45, 'max_lag' => 30])->positionLifetimeWasRaised());
+        $this->assertSame(60, $this->read(['position_lifetime' => 60, 'max_lag' => 30])->positionLifetime());
+        $this->assertSame(75, $this->read(['position_lifetime' => 75, 'max_lag' => 30])->positionLifetime());
+        $this->assertFalse($this->read(['position_lifetime' => 75, 'max_lag' => 30])->positionLifetimeWasRaised());
+        $this->assertFalse($this->read(['max_lag' => 30])->positionLifetimeWasRaised(), 'Nothing was configured');
     }
 
     public function testALongMaxLagRaisesThePositionPastItsUsualCeiling(): void
     {
-        $this->assertSame(600, $this->read(['max_lag' => 600])->positionLifetime());
+        $this->assertSame(630, $this->read(['max_lag' => 600])->positionLifetime());
         $this->assertSame(300, $this->read(['max_lag' => 5, 'position_lifetime' => 9000])->positionLifetime());
+    }
+
+    /**
+     * The ceiling once put a long lifetime below a long max_lag, with nothing said.
+     */
+    public function testTheUsualCeilingNeverPutsThePositionBelowMaxLagAndOneCheck(): void
+    {
+        $settings = $this->read(['max_lag' => 600, 'position_lifetime' => 9000]);
+
+        $this->assertSame(630, $settings->positionLifetime());
+        $this->assertFalse($settings->positionLifetimeWasRaised(), 'The store asked for longer, not shorter');
     }
 
     public function testOnlyTheBooleanTrueMakesItPooled(): void
@@ -274,6 +318,11 @@ class SettingsReaderTest extends TestCase
                 'pfx_quote*',
                 'pfx_quote_id_mask',
                 'pfx_sales_order*',
+                'pfx_customer_entity',
+                'pfx_customer_visitor',
+                'pfx_oauth_token',
+                'pfx_jwt_auth_revoked',
+                'pfx_persistent_session',
                 'pfx_invented_log',
                 'pfx_invented_audit*',
             ],

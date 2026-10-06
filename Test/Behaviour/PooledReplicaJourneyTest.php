@@ -60,7 +60,7 @@ class PooledReplicaJourneyTest extends VisitorJourneyTestCase
     {
         $this->readSplit = ['pooled' => true];
         $this->writeInOneRequest();
-        $this->clock->advance(31);
+        $this->clock->advance(61);
 
         $page = $this->startRequest('GET');
         $answers = [
