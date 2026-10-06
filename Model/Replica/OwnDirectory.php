@@ -40,13 +40,17 @@ class OwnDirectory
                 $this->file->createDirectory($directory, 0700);
             }
 
-            if (is_link($directory) || !is_dir($directory)) {
-                return '';
-            }
-
-            return fileowner($directory) === $user && (fileperms($directory) & 0077) === 0 ? $directory : '';
+            return $this->isThisUsersAlone($directory, $user) ? $directory : '';
         } catch (Throwable) {
             return '';
         }
+    }
+
+    private function isThisUsersAlone(string $directory, int $user): bool
+    {
+        return !is_link($directory)
+            && is_dir($directory)
+            && fileowner($directory) === $user
+            && (fileperms($directory) & 0077) === 0;
     }
 }
