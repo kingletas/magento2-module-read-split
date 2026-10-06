@@ -331,7 +331,7 @@ grep -qi 'enabled' <<< "$(magento module:status "$MODULE_NAME")" || stop "$MODUL
 step "the store has a replica its own user can read and ask for its replication status"
 servers="$(ask servers "$REPLICA_HOST")"
 [ "$(field "$servers" reachable)" = "1" ] \
-	|| stop "nothing answers the store's user at ${REPLICA_HOST}. This proof needs a replica: on Kapelos, kapelos scale replica=1 -y"
+	|| stop "nothing answers the store's user at ${REPLICA_HOST}. This proof needs a replica. On a store run by Kapelos (https://github.com/kingletas/kapelos), one is added with: kapelos scale replica=1 -y"
 [ "$(field "$servers" monitor)" = "1" ] \
 	|| stop "the store's user may not ask ${REPLICA_HOST} for its replication status, so the module would keep it out of use. On the replica, as root: GRANT SLAVE MONITOR ON *.* TO the store's user"
 [ "$(field "$servers" replicating)" = "1" ] || stop "${REPLICA_HOST} is not replicating: one of its replication threads is stopped"
