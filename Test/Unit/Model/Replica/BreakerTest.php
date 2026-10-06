@@ -10,6 +10,9 @@ declare(strict_types=1);
 namespace Kingletas\ReadSplit\Test\Unit\Model\Replica;
 
 use Kingletas\ReadSplit\Test\Support\SplitAdapterTestCase;
+use Magento\Framework\Exception\FileSystemException;
+use Magento\Framework\Filesystem\Driver\File;
+use Magento\Framework\Phrase;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -153,16 +156,20 @@ class BreakerTest extends SplitAdapterTestCase
         $this->breaker()->trip('invented reason');
         $marker = $this->varDir . '/' . $this->markers()[0];
         $this->clock->advance(30);
-        chmod($this->varDir, 0500);
         $this->logger = $this->createMock(LoggerInterface::class);
         $this->logger->expects($this->once())->method('warning')->with($this->stringContains($marker));
         $this->logger->expects($this->never())->method('notice');
+        $readOnly = new class extends File {
+            public function deleteFile($path)
+            {
+                throw new FileSystemException(new Phrase('The invented directory is read-only.'));
+            }
+        };
 
-        $probe = $this->breaker();
+        $probe = $this->breaker($readOnly);
         $this->assertTrue($probe->allowsAttempt());
         $probe->recordSuccess();
 
-        chmod($this->varDir, 0700);
         $this->assertFileExists($marker);
         $this->assertFalse($this->breaker()->allowsAttempt(), 'The retry claimed the next thirty seconds');
     }
