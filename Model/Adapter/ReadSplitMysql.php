@@ -163,7 +163,14 @@ class ReadSplitMysql extends Mysql
      */
     protected function _query($sql, $bind = [])
     {
-        if ($this->connecting || $this->_queryHook) {
+        if ($this->connecting) {
+            return $this->onPrimary($sql, $bind);
+        }
+
+        // A hooked statement runs on the primary unrouted, and a write there still pins the request.
+        if ($this->_queryHook) {
+            $this->router->notePrimaryStatement((string) $sql);
+
             return $this->onPrimary($sql, $bind);
         }
 

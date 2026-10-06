@@ -176,7 +176,8 @@ class Breaker implements ResetAfterRequestInterface
     }
 
     /**
-     * True for the one request that should ask about replication, at most once every thirty seconds on this node.
+     * True for the request that should ask about replication: one every thirty seconds on this node, or every
+     * request when no marker can be kept.
      */
     public function claimHealthCheck(): bool
     {
@@ -186,7 +187,14 @@ class Breaker implements ResetAfterRequestInterface
 
         $age = $this->age('checked');
 
-        return ($age === null || $age >= self::WINDOW) && $this->touch('checked') !== null;
+        if ($age !== null && $age < self::WINDOW) {
+            return false;
+        }
+
+        // With nowhere to record the claim, every request asks: a replica nobody asks could be stopped for good.
+        $this->touch('checked');
+
+        return true;
     }
 
     /**

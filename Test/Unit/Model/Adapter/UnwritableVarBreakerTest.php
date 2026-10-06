@@ -41,6 +41,25 @@ class UnwritableVarBreakerTest extends SplitAdapterTestCase
         $this->assertNotSame([], $this->fallbackMarkers());
     }
 
+    /**
+     * With nowhere to keep a marker nobody could record that replication was asked about, and once nobody asked:
+     * a replica whose replication had stopped went on serving reads.
+     */
+    public function testWithNowhereToKeepAMarkerEveryRequestStillAsksAboutReplication(): void
+    {
+        $this->makeVarUnwritable();
+        rmdir($this->tempDir);
+        $this->replica->status['Slave_SQL_Running'] = 'No';
+
+        for ($request = 0; $request < 3; ++$request) {
+            $this->assertSame('primary', $this->answeredBy($this->adapter(), 'SELECT * FROM store'));
+        }
+
+        $this->assertSame(3, $this->replica->statusChecks);
+        $this->assertSame([], $this->replica->sql(), 'No read reached a replica that is not replicating');
+        mkdir($this->tempDir);
+    }
+
     public function testTheReplicaComesBackThroughTheFallbackMarker(): void
     {
         $this->makeVarUnwritable();

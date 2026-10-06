@@ -39,6 +39,8 @@ class Replica
      */
     private bool $unconfirmedFailure = false;
 
+    private string $failed = '';
+
     /**
      * @var array<int, array{0: string, 1: mixed}>
      */
@@ -111,6 +113,7 @@ class Replica
             }
 
             $this->unconfirmedFailure = true;
+            $this->failed = $this->describe($failure);
 
             return null;
         }
@@ -123,7 +126,7 @@ class Replica
     {
         if ($this->unconfirmedFailure) {
             $this->unconfirmedFailure = false;
-            $this->breaker->trip('it failed a statement the primary answered');
+            $this->breaker->trip('it failed a statement the primary answered (' . $this->failed . ')');
         }
     }
 

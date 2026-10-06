@@ -214,6 +214,17 @@ class SettingsReaderTest extends TestCase
         $this->assertStringContainsString('only the default connection can be split', $settings->reason());
     }
 
+    public function testADefaultConnectionWithNoHostIsRefusedWithTheReason(): void
+    {
+        $noHost = ['host' => '', 'dbname' => 'invented_store'];
+        $reader = $this->reader(['replica' => ['host' => 'db-replica.example']], $noHost);
+
+        foreach ([$reader->forTarget(), $reader->read(self::DEFAULT_CONNECTION)] as $settings) {
+            $this->assertSame(SettingsState::Refused, $settings->state());
+            $this->assertStringContainsString('has no host', $settings->reason());
+        }
+    }
+
     public function testTheStatesThatAreNotRefusals(): void
     {
         $block = ['replica' => ['host' => 'db-replica.example']];
@@ -256,6 +267,8 @@ class SettingsReaderTest extends TestCase
                 'oauth_token',
                 'jwt_auth_revoked',
                 'persistent_session',
+                'login_as_customer',
+                'downloadable_link_purchased*',
             ],
             $settings->primaryOnlyTables()
         );
@@ -323,6 +336,8 @@ class SettingsReaderTest extends TestCase
                 'pfx_oauth_token',
                 'pfx_jwt_auth_revoked',
                 'pfx_persistent_session',
+                'pfx_login_as_customer',
+                'pfx_downloadable_link_purchased*',
                 'pfx_invented_log',
                 'pfx_invented_audit*',
             ],
@@ -336,7 +351,8 @@ class SettingsReaderTest extends TestCase
         $this->assertSame(1, $this->read(['max_lag' => 0])->maxLag());
         $this->assertSame(86400, $this->read(['max_lag' => 999999])->maxLag());
         $this->assertSame(30, $this->read(['max_lag' => 'soon'])->maxLag());
-        $this->assertSame(1, $this->read(['read_timeout' => 0])->readTimeout());
+        $this->assertSame(2, $this->read(['read_timeout' => 0])->readTimeout());
+        $this->assertSame(2, $this->read(['read_timeout' => 1])->readTimeout(), 'The server stops a query first');
         $this->assertSame(60, $this->read(['read_timeout' => 600])->readTimeout());
         $options = $this->read(['connect_timeout' => 99])->replicaConfig()['driver_options'];
         $this->assertSame(30, $options[PDO::ATTR_TIMEOUT]);

@@ -227,8 +227,10 @@ class BreakerTest extends SplitAdapterTestCase
         chmod($this->fallbackDir(), 0777);
         clearstatcache();
 
+        $before = glob($this->fallbackDir() . '/*') ?: [];
         $this->assertTrue($this->breaker()->allowsAttempt(), 'Anyone could have put that marker there');
-        $this->assertFalse($this->breaker()->claimHealthCheck(), 'And nothing more is written there');
+        $this->assertTrue($this->breaker()->claimHealthCheck(), 'With no marker to keep, replication is asked about');
+        $this->assertSame($before, glob($this->fallbackDir() . '/*') ?: [], 'And nothing more is written there');
     }
 
     /**
@@ -273,7 +275,8 @@ class BreakerTest extends SplitAdapterTestCase
         $breaker = $this->breaker();
         $breaker->trip('invented reason');
         $this->assertTrue($this->breaker()->allowsAttempt());
-        $this->assertFalse($this->breaker()->claimHealthCheck());
+        $this->assertTrue($this->breaker()->claimHealthCheck(), 'Nobody can record the claim, so every request asks');
+        $this->assertTrue($this->breaker()->claimHealthCheck());
         $this->breaker()->trip('invented reason');
 
         mkdir($this->tempDir);

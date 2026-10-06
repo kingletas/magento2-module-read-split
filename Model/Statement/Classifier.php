@@ -20,7 +20,8 @@ class Classifier
     private const string NOT_PLAIN = '/\bFOR\s+UPDATE\b|\bFOR\s+SHARE\b|\bLOCK\s+IN\s+SHARE\s+MODE\b'
         . '|\bINTO\b|:=|@@|\bSQL_CALC_FOUND_ROWS\b|\bPREVIOUS\s+VALUE\s+FOR\b'
         . '|\b(?:GET_LOCK|RELEASE_LOCK|RELEASE_ALL_LOCKS|IS_FREE_LOCK|IS_USED_LOCK|LAST_INSERT_ID|FOUND_ROWS'
-        . '|ROW_COUNT|LASTVAL|MASTER_GTID_WAIT|MASTER_POS_WAIT|SLEEP|BENCHMARK)`?\s*\(/i';
+        . '|ROW_COUNT|LASTVAL|MASTER_GTID_WAIT|MASTER_POS_WAIT|SLEEP|BENCHMARK'
+        . '|CONNECTION_ID|CURRENT_USER|SESSION_USER|SYSTEM_USER|USER|DATABASE|SCHEMA)`?\s*\(|\bCURRENT_USER\b/i';
 
     /**
      * A SELECT that moves a sequence on writes to it.
@@ -44,7 +45,8 @@ class Classifier
 
     private function kindOf(string $text): StatementKind
     {
-        if ($this->sqlText->hasSeparator($text)) {
+        // A comment still open after the comments were taken out is one nested where the lexer could not follow.
+        if ($this->sqlText->hasSeparator($text) || str_contains($text, '/*') || str_contains($text, '*/')) {
             return StatementKind::Write;
         }
 
@@ -63,10 +65,12 @@ class Classifier
 
     private function selectKind(string $text): StatementKind
     {
-        if (preg_match(self::SEQUENCE_WRITE, $text) === 1) {
+        $match = new PatternMatch();
+
+        if ($match->found(self::SEQUENCE_WRITE, $text)) {
             return StatementKind::Write;
         }
 
-        return preg_match(self::NOT_PLAIN, $text) === 1 ? StatementKind::PinningRead : StatementKind::Read;
+        return $match->found(self::NOT_PLAIN, $text) ? StatementKind::PinningRead : StatementKind::Read;
     }
 }

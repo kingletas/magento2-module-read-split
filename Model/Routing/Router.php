@@ -49,7 +49,7 @@ class Router
 
     public function route(string $sql, int $transactionLevel): Route
     {
-        if (!$this->settings->isActive() || $this->isCommandLine() || ($this->pinned && $this->wrote)) {
+        if (!$this->settings->isActive() || $this->isCommandLine() || $this->requestHasWritten()) {
             return Route::Primary;
         }
 
@@ -69,7 +69,7 @@ class Router
      */
     public function notePrimaryStatement(string $sql): void
     {
-        if (!$this->settings->isActive() || $this->isCommandLine() || ($this->pinned && $this->wrote)) {
+        if (!$this->settings->isActive() || $this->isCommandLine() || $this->requestHasWritten()) {
             return;
         }
 
@@ -79,6 +79,19 @@ class Router
             // Session state set outside routing is never replayed, so the replica could not match it.
             StatementKind::SessionState, StatementKind::PinningRead => $this->pin(),
         };
+    }
+
+    /**
+     * True once this connection, or another split connection of the same request, has written.
+     */
+    private function requestHasWritten(): bool
+    {
+        if ($this->settings->isActive() && $this->writeLedger->hasWritten()) {
+            $this->pinned = true;
+            $this->wrote = true;
+        }
+
+        return $this->pinned && $this->wrote;
     }
 
     /**

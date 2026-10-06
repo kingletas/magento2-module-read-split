@@ -30,6 +30,6 @@ class Classification
      */
     public function mentions(string $tablePattern): bool
     {
-        return $tablePattern !== '' && preg_match($tablePattern, $this->text) === 1;
+        return $tablePattern !== '' && (new PatternMatch())->found($tablePattern, $this->text);
     }
 }

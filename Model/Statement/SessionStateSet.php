@@ -19,8 +19,22 @@ class SessionStateSet
     private const array PREFIXES = ['character_set_', 'collation_'];
 
     /**
-     * True when every assignment in the SET is on the allow-list and none reads a table, calls a function or reads
-     * a server variable for its value.
+     * A number, a string (emptied by now), NULL, TRUE or FALSE.
+     */
+    private const string LITERAL = "''|[-+]?\\d+(?:\\.\\d+)?|NULL|TRUE|FALSE";
+
+    /**
+     * A value bound when the statement runs, by position or by name.
+     */
+    private const string BOUND = '[?]|[:]\w+';
+
+    /**
+     * A user variable given a literal, a bound value or another user variable.
+     */
+    private const string PLAIN_VALUE = '/=\s*(?:' . self::LITERAL . '|' . self::BOUND . '|@(?!@)[\w$.]+)\s*$/i';
+
+    /**
+     * True when every assignment in the SET is on the allow-list, and a user variable is given a plain value.
      */
     public function isSessionState(string $executable): bool
     {
@@ -50,8 +64,8 @@ class SessionStateSet
         }
 
         if (preg_match('/^@(?!@)[\w$.]+\s*:?=/', $assignment) === 1) {
-            // A function or a server variable can answer differently on each server, and a lock is held on one.
-            return !str_contains($assignment, '(') && !str_contains($assignment, '@@');
+            // Anything computed can answer differently on each server, and a lock taken here is held on one.
+            return preg_match(self::PLAIN_VALUE, $assignment) === 1;
         }
 
         $variable = '/^(?:(?:SESSION|LOCAL)\s+|@@(?:SESSION\.|LOCAL\.)?)?`?([a-z_]+)`?\s*:?=/i';

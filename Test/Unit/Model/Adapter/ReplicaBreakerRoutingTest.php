@@ -89,6 +89,16 @@ class ReplicaBreakerRoutingTest extends SplitAdapterTestCase
         $this->assertSame(1, $this->replica->connects);
     }
 
+    public function testATripForAFailedStatementSaysWhatFailed(): void
+    {
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->once())->method('warning')
+            ->with($this->stringContains('it failed a statement the primary answered (RuntimeException 0)'));
+        $this->replica->failOn = '/catalog_product_entity/';
+
+        $this->answeredBy($this->adapter(), 'SELECT * FROM catalog_product_entity');
+    }
+
     public function testAStatementThatFailsOnBothServersDoesNotTripIt(): void
     {
         $this->replica->failOn = '/invented_missing_table/';

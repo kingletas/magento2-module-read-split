@@ -245,6 +245,13 @@ class StatementRoutingTest extends SplitAdapterTestCase
             'an integration or customer token' => ['SELECT * FROM `oauth_token` WHERE (token = ?)'],
             'a revoked web token' => ['SELECT * FROM jwt_auth_revoked WHERE user_type_id = 3 AND user_id = 12'],
             'a persistent session' => ['SELECT * FROM persistent_session WHERE `key` = ?'],
+            'an admin logged in as a customer' => ['SELECT COUNT(*) FROM login_as_customer WHERE customer_id = ?'],
+            'how often a bought link was downloaded' => [
+                'SELECT * FROM `downloadable_link_purchased_item` WHERE (link_hash = ?)',
+            ],
+            'the purchase a bought link belongs to' => [
+                'SELECT * FROM downloadable_link_purchased WHERE order_id = 82',
+            ],
             'a join onto the customer' => [
                 'SELECT r.* FROM review AS r INNER JOIN customer_entity AS c ON c.entity_id = r.customer_id',
             ],
@@ -357,6 +364,40 @@ class StatementRoutingTest extends SplitAdapterTestCase
         }, 'method' => 'observe']);
 
         $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM store'));
+    }
+
+    /**
+     * A statement run under a query hook reaches the primary unrouted, and a write among them still has to pin.
+     */
+    public function testAWriteUnderAQueryHookPinsTheRequestAndIsRecorded(): void
+    {
+        $adapter = $this->adapter();
+        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM store'));
+        $adapter->setQueryHook(['object' => new class {
+            public function observe(string $sql, array $bind): void
+            {
+            }
+        }, 'method' => 'observe']);
+        $adapter->query('UPDATE invented_table SET flag = 1');
+        $adapter->setQueryHook(null);
+
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM store'));
+        $this->assertTrue($this->ledger->hasWritten());
+    }
+
+    /**
+     * A stock env.php gives the indexer connection the same server, so one request can hold two split connections.
+     */
+    public function testAWriteThroughOneSplitConnectionPinsTheRequestsOtherOne(): void
+    {
+        $default = $this->adapter();
+        $indexer = $this->adapter();
+        $this->assertSame('replica', $this->answeredBy($indexer, 'SELECT * FROM store'));
+
+        $default->insert('invented_table', ['id' => 1]);
+
+        $this->assertSame('primary', $this->answeredBy($indexer, 'SELECT * FROM store'));
+        $this->assertSame('primary', $this->answeredBy($default, 'SELECT * FROM store'));
     }
 
     public function testAWritePreparedOutsideTheQueryPathStillPinsTheRequest(): void

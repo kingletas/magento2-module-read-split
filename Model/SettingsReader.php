@@ -42,6 +42,8 @@ class SettingsReader
         'oauth_token',
         'jwt_auth_revoked',
         'persistent_session',
+        'login_as_customer',
+        'downloadable_link_purchased*',
     ];
 
     /**
@@ -94,6 +96,10 @@ class SettingsReader
             );
         }
 
+        if ($this->connectionIdentity->of($target)[0] === '') {
+            return new Settings(SettingsState::Refused, 'db/connection/default has no host');
+        }
+
         if (!$this->connectionIdentity->same($target, $connectionConfig)) {
             return new Settings(SettingsState::OtherConnection);
         }
@@ -142,7 +148,7 @@ class SettingsReader
             primaryOnlyTables: $this->primaryOnlyTables($block['primary_only_tables'] ?? []),
             positionLifetime: max($shortest, min($lifetime ?? 0, self::USUAL_LONGEST_LIFETIME)),
             maxLag: $maxLag,
-            readTimeout: $this->bounded($block['read_timeout'] ?? null, 5, 1, 60),
+            readTimeout: $this->bounded($block['read_timeout'] ?? null, 5, 2, 60),
             positionLifetimeWasRaised: $lifetime !== null && $lifetime < $shortest
         );
     }
