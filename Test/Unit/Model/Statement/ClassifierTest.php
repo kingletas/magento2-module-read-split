@@ -50,6 +50,16 @@ class ClassifierTest extends TestCase
                 'SET @invented = CURRENT_TIMESTAMP',
                 StatementKind::Write,
             ],
+            'a user variable set from a lock compared with a number' => [
+                "SET @invented = GET_LOCK('invented', 1) = 1",
+                StatementKind::Write,
+            ],
+            'a user variable set from a server variable compared' => [
+                "SET @invented = @@hostname = 'invented'",
+                StatementKind::Write,
+            ],
+            'a user variable set from a function compared' => ['SET @invented = RAND() >= 0', StatementKind::Write],
+            'a user variable set with the other assignment sign' => ['SET @invented := 5', StatementKind::SessionState],
             'a user variable set from another' => ['SET @invented = @other', StatementKind::SessionState],
             'a user variable set from a bound value' => ['SET @invented = ?', StatementKind::SessionState],
             'a user variable set from a string' => ["SET @invented = 'a (b) c'", StatementKind::SessionState],

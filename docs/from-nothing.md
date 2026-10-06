@@ -81,7 +81,7 @@ GRANT SELECT ON store.* TO 'store_reader'@'%';
 GRANT SLAVE MONITOR ON *.* TO 'store_reader'@'%';
 ```
 
-`SLAVE MONITOR` is what lets the store ask the replica whether replication is running. **The likely mistake is leaving it out**: the store then cannot tell a healthy replica from a stopped one, so it refuses to use the replica at all, and step 4 shows the breaker open.
+`SLAVE MONITOR` is what lets the store ask the replica whether replication is running. **The likely mistake is leaving it out**: the store then cannot tell a healthy replica from a stopped one, so it refuses to use the replica at all, and step 5 shows the breaker open.
 
 Run the replica with `read_only=ON` as well, so that nothing but replication can write to it.
 
@@ -150,7 +150,7 @@ bin/magento cache:clean full_page
 
 Open a category page in a browser, then ask the replica again. **`Com_select` has gone up by a few dozen or more.** Those are the page's reads. Its writes, and anything it read after its first write, went to the primary.
 
-**A healthy run logs nothing.** The module writes to Magento's log only when the replica is taken out of use and when it comes back.
+**A healthy run logs nothing.** The module writes to Magento's log when the replica is taken out of use and when it comes back, and it warns, at most once an hour, about a setting it refused or raised, a statement the replica refused or stopped for running too long, and a read-after-write position it could not set.
 
 Then run the status command once more. If the breaker is open now, the store reached the replica and did not like what it found:
 

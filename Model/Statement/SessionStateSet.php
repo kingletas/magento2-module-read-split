@@ -29,9 +29,15 @@ class SessionStateSet
     private const string BOUND = '[?]|[:]\w+';
 
     /**
-     * A user variable given a literal, a bound value or another user variable.
+     * A user variable by its name, which a server variable's second @ is not.
      */
-    private const string PLAIN_VALUE = '/=\s*(?:' . self::LITERAL . '|' . self::BOUND . '|@(?!@)[\w$.]+)\s*$/i';
+    private const string USER_VARIABLE = '@(?!@)[\w$.]+';
+
+    /**
+     * The whole of an assignment that gives a user variable a literal, a bound value or another user variable.
+     */
+    private const string PLAIN_VALUE = '/^' . self::USER_VARIABLE . '\s*:?=\s*(?:' . self::LITERAL . '|' . self::BOUND
+        . '|' . self::USER_VARIABLE . ')\s*$/i';
 
     /**
      * True when every assignment in the SET is on the allow-list, and a user variable is given a plain value.
@@ -63,7 +69,7 @@ class SessionStateSet
             return true;
         }
 
-        if (preg_match('/^@(?!@)[\w$.]+\s*:?=/', $assignment) === 1) {
+        if (preg_match('/^' . self::USER_VARIABLE . '\s*:?=/', $assignment) === 1) {
             // Anything computed can answer differently on each server, and a lock taken here is held on one.
             return preg_match(self::PLAIN_VALUE, $assignment) === 1;
         }
