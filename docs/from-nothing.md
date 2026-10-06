@@ -26,7 +26,7 @@ You switch it on in `app/etc/env.php`. There is nothing to set in the admin.
 
 ## What you need first
 
-- **A store on Mage-OS or Magento Open Source 2.4.8 or later**, PHP 8.3 or 8.4, **served over HTTPS**. The module's cookie is `Secure`, and on plain HTTP a browser never sends it back.
+- **A store on Mage-OS or Magento Open Source 2.4.8 or later**, PHP 8.3 or later, **served over HTTPS**. The module's cookie is `Secure`, and on plain HTTP a browser never sends it back.
 - **A MariaDB 10.5 or later replica of the store's database, fed by GTID replication.** On the replica, this should show both threads running and a GTID mode:
 
 ```sql
@@ -98,7 +98,7 @@ Add a `read_split` block to `app/etc/env.php`, **beside** `connection`, never in
     ],
     'read_split' => [
         'replica' => [
-            'host' => 'db-replica.example',
+            'host' => 'db-replica.example', // or 'db-replica.example:3307' for another port
             'username' => 'store_reader',
             'password' => '...',
         ],
@@ -119,6 +119,7 @@ bin/magento kingletas:read-split:status
 ```text
 Read split: active
 Replica: db-replica.example, port 3306, database store
+Settings: max_lag 30 s, position lifetime 60 s, pooled no, read timeout 5 s, connect timeout 2 s
 Breaker: closed
 ```
 
@@ -129,6 +130,7 @@ That is the working state. **If it says something else:**
 | `Read split: configured but not in use`, then a `Reason:` line | The block is there and cannot be used. The reason names what is missing, and the command exits non-zero, so a deploy can stop on it |
 | `Read split: not configured` | The store did not find the block. It is inside a connection, or its key is not `read_split` under `db` |
 | `Read split: switched off in env.php` | The block has `'enabled' => false` |
+| `Breaker: unknown from here` | You ran the command as a user who cannot write `var/`. Run it as the web server's user to see that node's breaker |
 
 The breaker line only changes once a storefront request has tried the replica, which is the next step.
 
@@ -162,7 +164,7 @@ Breaker: open, retried in 24 seconds, kept in var/
 
 This is the part worth seeing before you rely on it. Stop the replica's database, or block the store's way to it, and load an uncached page.
 
-**The page still loads.** The first request waits up to two seconds for the replica, gives up, and reads from the primary. The log gets one line:
+**The page still loads.** The first request waits up to two seconds for the replica (longer if your store's own `driver_options` set a longer connect timeout), gives up, and reads from the primary. The log gets one line:
 
 ```text
 Read split: the replica is out of use on this node, and is retried every 30 seconds: opening it failed (...).

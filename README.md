@@ -14,7 +14,7 @@ Every connection Magento opens is built by its connection type. This module repl
 
 The module's adapter is Magento's MySQL adapter, and it stays the primary. Beside it, it keeps a second connection to the replica, opened at the first statement that may go there. **A statement goes to the replica only when all of these hold; anything else goes to the primary:**
 
-- **It is a plain `SELECT`.** Not `FOR UPDATE`, `LOCK IN SHARE MODE` or `FOR SHARE`, and it calls none of `GET_LOCK`, `RELEASE_LOCK`, `IS_USED_LOCK`, `LAST_INSERT_ID()`, `FOUND_ROWS()`, `SQL_CALC_FOUND_ROWS` or a server variable, and it sets no variable. Those answer from one connection's own state, so they have to run on the primary.
+- **It is a plain `SELECT`.** Not `FOR UPDATE`, `LOCK IN SHARE MODE` or `FOR SHARE`, and it calls nothing that answers from one connection's own state: `GET_LOCK`, `RELEASE_LOCK`, `IS_USED_LOCK`, `LAST_INSERT_ID()`, `FOUND_ROWS()`, `CONNECTION_ID()`, `CURRENT_USER`, `SQL_CALC_FOUND_ROWS`, a server variable and their like, and it sets no variable. Those answer from one connection's own state, so they have to run on the primary.
 - **No transaction is open.**
 - **The request has not been pinned.** The first statement that is not a plain `SELECT` pins the rest of the request to the primary: a write, a lock, a transaction, or a `SET` that is not on the allow-list below. So a request that writes a visitor row and then reads it back reads it from the primary.
 - **The request is a storefront `GET` or `HEAD`**, in the `frontend` or `graphql` area. A `POST`, the admin, REST, SOAP, cron and the command line use the primary for everything.
@@ -30,15 +30,15 @@ A statement the module does not recognise is treated as a write. An unknown stat
 
 Every connection opens with `SET SQL_MODE`, `SET time_zone` and `SET NAMES`. Read literally, "pin on the first statement that is not a `SELECT`" would pin every request at connect, and the replica would serve nothing.
 
-So the replica is opened with Magento's own adapter and the primary's own config, and runs the same connection setup. After that, **a `SET` of session state runs on the primary as before, is recorded, and is replayed in order on the replica when it opens**; once the replica is open, such a `SET` runs on both. Only an allow-list counts as session state: `NAMES`, `sql_mode`, `time_zone`, the `character_set_*` and `collation_*` variables, and user variables given a plain value. A user variable set from a subquery, a function or a server variable such as `@@hostname` is not one of them: those can answer differently on each server, and a lock taken that way is held on one of them. **Any other `SET` pins the request, `autocommit` and `SET TRANSACTION` included.**
+So the replica is opened with Magento's own adapter and the primary's own config, and runs the same connection setup. After that, **a `SET` of session state runs on the primary as before, is recorded, and is replayed in order on the replica when it opens**; once the replica is open, such a `SET` runs on both. Only an allow-list counts as session state: `NAMES`, `sql_mode`, `time_zone`, the `character_set_*` and `collation_*` variables, and user variables given a plain value: a number, a string, a bound value, `NULL`, `TRUE`, `FALSE` or another user variable. A user variable set from anything computed, a subquery, a function, arithmetic or a server variable such as `@@hostname`, is not one of them: those can answer differently on each server, and a lock taken that way is held on one of them. **Any other `SET` pins the request, `autocommit` and `SET TRANSACTION` included.**
 
 ### Tables that are never read from the replica
 
 Some tables are read by one request right after the request before it wrote them. The session table is the one every store has: with database sessions, each request reads the row the previous request wrote a moment earlier, and the session write comes at the end of the request, too late to hand anything on. The quote and the order are the others: an empty quote read from a lagging replica makes Magento's checkout session drop the visitor's cart for good, and the order success page reads the order it has just placed. So a read of a listed table goes to the primary **without pinning the rest of the request**.
 
-**The tables that say whether a session or a token still stands are on the list for a different reason.** When a customer changes their password, Magento writes a cutoff on `customer_entity`, and every other browser's session is checked against it. Read from a lagging replica, that check would keep an old session open until the replica caught up. The same goes for `customer_visitor`, for `oauth_token`, for `jwt_auth_revoked` and for `persistent_session`.
+**The tables that say whether a session or a token still stands are on the list for a different reason.** When a customer changes their password, Magento writes a cutoff on `customer_entity`, and every other browser's session is checked against it. Read from a lagging replica, that check would keep an old session open until the replica caught up. The same goes for `customer_visitor`, for `oauth_token`, for `jwt_auth_revoked` and for `persistent_session`. **`login_as_customer` is there for the same reason:** an admin's session as a customer has to end when the admin logs out, not when the replica hears of it. **So is every `downloadable_link_purchased*` table:** the download controller reads how many downloads are used, adds one and stops, so a link bought for one download could be fetched again and again from a replica that had not counted the first.
 
-**The list always holds `session`, every `quote*` table, `quote_id_mask`, every `sales_order*` table, `customer_entity`, `customer_visitor`, `oauth_token`, `jwt_auth_revoked` and `persistent_session`**, and `primary_only_tables` adds to it. A name ending in `*` matches every table that starts with it; one without matches that table only, so `customer_entity_varchar` is still read from the replica. The rule for adding one: **a table belongs on the list when a stale read of it can lead Magento to write something wrong, or to let in someone the primary has already shut out.** The cost is a handful of pages that are not cached anyway, and a read or two by primary key on a logged-in page. The match is on the name wherever it appears outside a string or comment, so a column that happens to be named like a listed table, such as `quote_id`, also sends its statement to the primary; that costs offload, never correctness.
+**The list always holds `session`, every `quote*` table, `quote_id_mask`, every `sales_order*` table, `customer_entity`, `customer_visitor`, `oauth_token`, `jwt_auth_revoked`, `persistent_session`, `login_as_customer` and every `downloadable_link_purchased*` table**, and `primary_only_tables` adds to it. A name ending in `*` matches every table that starts with it; one without matches that table only, so `customer_entity_varchar` is still read from the replica. The rule for adding one: **a table belongs on the list when a stale read of it can lead Magento to write something wrong, or to let in someone the primary has already shut out.** The cost is a handful of pages that are not cached anyway, and a read or two by primary key on a logged-in page. The match is on the name wherever it appears outside a string or comment, so a column that happens to be named like a listed table, such as `quote_id`, also sends its statement to the primary; that costs offload, never correctness.
 
 ## Reading your own writes across requests
 
@@ -48,37 +48,38 @@ A replica lags. A visitor who adds to cart and then opens the cart page would se
 
 The cookie:
 
-- is **encrypted with the store's key**, so it gives away neither the primary's server id nor its running count of transactions, which is the store's write volume;
+- is **encrypted with the store's key**, so it shows neither the primary's server id nor its running count of transactions, which is the store's write volume. Its length still grows with the number of digits in that count;
 - is `HttpOnly`, `Secure` and `SameSite=Lax`, lives for `position_lifetime` seconds (`max_lag` plus 30 by default, and never shorter), and carries its own issue time, so a copy kept past its lifetime is ignored;
 - is checked against the MariaDB GTID format after decryption and **bound as a parameter** to `MASTER_GTID_WAIT`, never put into SQL text. **A forged or malformed value sends that one request to the primary** and does nothing else.
 
 If the primary cannot give a position, the cookie holds the visitor on the primary until it expires, which is always correct and costs only that visitor's offload.
 
-**A write over REST hands on its position too.** Luma's checkout saves the shipping and payment steps and places the order through REST, and the success page then reads the new order. REST requests still read only from the primary; only the position is carried.
+**A write over REST hands on its position too, when it is a `POST`, a `PUT` or a `DELETE`.** Luma's checkout saves the shipping and payment steps and places the order through REST, and the success page then reads the new order. REST requests still read only from the primary; only the position is carried. A REST `GET` that writes hands nothing on: its answer carries no `Cache-Control`, and without one the module cannot tell it from a response a cache may store.
 
 **A position never lives shorter than `max_lag` plus 30 seconds.** The replica may serve other visitors while up to `max_lag` behind, and its lag is asked only once every 30 seconds, so between two checks it can be that much further behind and still in use. A visitor's own write has to be protected at least that long. A shorter `position_lifetime` is raised to it, with a warning at most once an hour per node.
 
-**Three visitors get no position, and so no read-after-write across requests:**
+**Four cases get no position, and so no read-after-write across requests:**
 
 - **one who moves between hostnames.** The cookie belongs to the host that set it, so a store spread over `www.shop.example` and `checkout.shop.example` hands nothing from one to the other;
 - **a GraphQL client that keeps no cookies.** Its `GET` queries read from the replica whatever it wrote a moment ago. Send the cookie back, or send the query that has to see the write as a `POST`;
-- **code that writes through a PDO handle it took from the connection.** That write goes past the adapter, so nothing sees it, and the request is not pinned either.
+- **code that writes through a PDO handle it took from the connection.** That write goes past the adapter, so nothing sees it, and the request is not pinned either;
+- **a request that writes and then stops without sending its response the usual way.** The position is set as the response leaves, so a controller that writes and calls `exit` hands nothing on. Magento's download controllers do, which is why their table is always read from the primary.
 
 ## When the replica is down or has stopped replicating
 
-**Each web node keeps a breaker: while it is open, no request on that node tries the replica, and every read goes to the primary.** It is two marker files in Magento's `var/` directory, `kingletas_read_split-<hash>.breaker` and `kingletas_read_split-<hash>.checked`, and the age of a file is what counts. The hash is of the installation's root path and the replica host, so two stores, or two Magento trees, on one node never share a breaker. It is deliberately not kept in Magento's cache: this module sits beneath the cache, and a cache backend may itself be down or kept in the database.
+**Each web node keeps a breaker: while it is open, no request on that node tries the replica, and every read goes to the primary.** It is two marker files in Magento's `var/` directory, `kingletas_read_split-<hash>.breaker` and `kingletas_read_split-<hash>.checked`, and the age of a file is what counts. Up to four more of the same name, ending `.inactive`, `.lifetime`, `.slow` and `.refused`, only space the hourly warnings out. The hash is of the installation's root path and the replica host, so two stores, or two Magento trees, on one node never share a breaker. A deploy that changes the root path, as a release switched by symlink does, therefore starts a new breaker and can repeat an hourly warning. It is deliberately not kept in Magento's cache: this module sits beneath the cache, and a cache backend may itself be down or kept in the database.
 
-**When `var/` cannot be written, the markers go under the system temp directory instead**, in `kingletas_read_split-<uid>/`, a directory the store's own user makes for itself with nobody else allowed in. It is still per node, outside the cache, and kept between requests; the warning when the breaker opens says so. **Every account on a host can write the system temp directory, so a marker is believed only in that directory, and only while it is a real directory, owned by the user PHP runs as, that no one else can write.** A marker anywhere else is ignored, and so is one dated in the future, wherever it is. Telling whose a directory is needs PHP's `posix` extension; without it the temp directory is not used at all. Under systemd's `PrivateTmp`, the temp directory is private to the PHP service, which is still one per node. **Only when neither place can be used is there no breaker:** every request then tries the replica, and each failed attempt logs a warning saying there is no breaker. Nothing throws.
+**When `var/` cannot be written, the markers go under the system temp directory instead**, in `kingletas_read_split-<uid>/`, a directory the store's own user makes for itself with nobody else allowed in. It is still per node, outside the cache, and kept between requests; the warning when the breaker opens says so. **Every account on a host can write the system temp directory, so a marker is believed only in that directory, and only while it is a real directory, owned by the user PHP runs as, that no one else can write.** A marker anywhere else is ignored, and so is one dated in the future, wherever it is. Telling whose a directory is needs PHP's `posix` extension; without it the temp directory is not used at all. Under systemd's `PrivateTmp`, the temp directory is private to the PHP service, which is still one per node. **Only when neither place can be used is there no breaker:** every request then tries the replica and asks it about replication first, since nobody can record that it was asked, and each failed attempt logs a warning saying there is no breaker. Nothing throws.
 
 **These open it:**
 
 - the replica refuses a connection, or fails while it is being opened: its replication check, the visitor's GTID check, or the session state being replayed, or later fails a session `SET` it is given;
-- the replica fails a statement that the primary then answers. A statement that fails on both servers is the statement's fault, and does not open it. **Neither does a statement the replica stops for running too long** (MariaDB's error 1969, from the `max_statement_time` the module sets): that says something about the query, so the request reads from the primary from there on, the replica stays in use for everyone else, and a warning says so at most once an hour per node. A page that slow costs each visitor who asks for it the wait and then the primary's time as well, so it wants a rate limit in front of it whatever the module does;
+- the replica fails a statement that the primary then answers. A statement that fails on both servers is the statement's fault, and does not open it. **Neither does a statement the replica stops for running too long** (MariaDB's error 1969, from the `max_statement_time` the module sets): that says something about the query, so the request reads from the primary from there on, the replica stays in use for everyone else, and a warning says so at most once an hour per node. A page that slow costs each visitor who asks for it the wait and then the primary's time as well, so it wants a rate limit in front of it whatever the module does. **Nor does a statement the replica refuses as wrong for it**, SQLSTATE class 42: a table it does not have, a column it has not got yet, a grant its user lacks. When the primary answers it, the request reads from the primary from there on, the replica stays in use, and the server's own words are logged at most once an hour per node. A refusal while the replica is being opened still opens the breaker;
 - **replication has stopped or fallen too far behind.** At most once every 30 seconds on each node, the request that opens the replica asks it `SHOW REPLICA STATUS`. If the I/O or the SQL thread is not running, or the replica is more than `max_lag` seconds behind (30 by default), the breaker opens. **If the question cannot be answered**, because of an error, a missing privilege or an empty answer, **the breaker opens as well**: that costs offload, never correctness. A replica that answers queries while its replication has stopped would otherwise serve stale prices and stock with no end, and no cookie would be involved.
 
-**After 30 seconds one request retries.** It claims the retry by touching the marker, so the other requests on that node keep to the primary meanwhile. If the replica opens, replication is running and within `max_lag`, the breaker closes. If not, it stays open for another 30 seconds.
+**After 30 seconds one request retries, or under load a few.** It claims the retry by touching the marker, so the other requests on that node keep to the primary meanwhile. The claim is a look at the marker and then a touch, so workers that look in the same instant can each retry once. If the replica opens, replication is running and within `max_lag`, the breaker closes. If not, it stays open for another 30 seconds.
 
-**It logs one warning when it opens, saying why, and one notice when it closes.** It never logs once per request, and a retry that fails logs nothing more.
+**It logs one warning when it opens, saying why, and one notice when it closes.** It never logs once per request, and a retry that fails logs nothing more. So a replica that stays down is in the log once, when it went, however long it stays down; the deploy check below shows the open breaker, and still passes.
 
 **One case does repeat, on a store that is already broken.** If `var/` turns read-only while the breaker is open, the retry reaches the replica and then cannot remove its marker. The breaker stays open: one request every 30 seconds uses the replica, the rest stay on the primary, and each of those retries logs a warning naming the file. Make `var/` writable again, or remove that file.
 
@@ -98,7 +99,7 @@ Then name it in the block as `replica.username` and `replica.password`.
 Read split: the replica is out of use on this node, and is retried every 30 seconds: its replication SQL thread is not running.
 ```
 
-The reason is one of: `opening it failed (<exception class> <code>)`, which is also what a missing `SLAVE MONITOR` looks like, with code 42000; `it gave no replication status`; `its replication IO thread is not running`, or `SQL`; `its replication lag is unknown`; `it is 45 seconds behind, over max_lag of 30`; `it failed a statement the primary answered`; `it failed a session SET (...)`. When it closes, once:
+The reason is one of: `opening it failed (<exception class> <code>)`, which is also what a missing `SLAVE MONITOR` looks like, with code 42000; `it gave no replication status`; `its replication IO thread is not running`, or `SQL`; `its replication lag is unknown`; `it is 45 seconds behind, over max_lag of 30`; `it failed a statement the primary answered (<exception class> <code>)`; `it failed a session SET (...)`. When it closes, once:
 
 ```text
 Read split: the replica answered again and is back in use on this node.
@@ -147,11 +148,13 @@ The block goes at `db/read_split` in `app/etc/env.php`, beside the connections, 
 | `connection` | `default` | Leave it out. Only the default connection can be split, and a block naming any other is refused |
 | `primary_only_tables` | `[]` | Tables whose reads always go to the primary, added to the defaults above. Names without the store's table prefix; a trailing `*` matches every table that starts with the name |
 | `position_lifetime` | `max_lag` + 30 | Seconds a visitor's read-after-write position is honoured, up to 300, or `max_lag` + 30 where that is longer. A shorter value is raised to `max_lag` + 30 |
-| `connect_timeout` | `2` | Seconds to wait for the replica to accept a TCP connection before falling back, from 1 to 30 |
-| `read_timeout` | `5` | Seconds the replica may take to answer, from its greeting on, before the request falls back to the primary and the breaker opens, from 1 to 60. The server also stops any replica query after one second less |
+| `connect_timeout` | `2` | Seconds to wait for the replica to accept a TCP connection before falling back, from 1 to 30. Ignored when the store's own `driver_options` already set a timeout |
+| `read_timeout` | `5` | Seconds the replica may take to answer, from its greeting on, before the request falls back to the primary and the breaker opens, from 2 to 60. The server also stops any replica query after one second less |
 | `max_lag` | `30` | Seconds the replica may be behind the primary before this node stops reading from it, from 1 to 86400. It is also how stale a page a visitor can be shown, so keep it as low as the replica can hold |
 
 **The block is checked when the settings are read, not at connect.** It splits the connection whose server and database match the one it names: host and port, with `db:3306` and `db` plus port 3306 counted as the same, and the database name. Nothing else in the connection is compared, since Magento adds keys of its own before its adapter sees the config. A block with no replica host, a replica with no database name (neither `replica.dbname` nor the connection's `dbname`), or a `connection` other than `default` is refused: every read goes to the primary, and a warning with the reason is logged at most once an hour per node.
+
+**A setting of the wrong kind is refused, never guessed.** `enabled` and `pooled` take `true` or `false` (`1`, `0`, `'true'` and `'false'` are read as those), the numbers take whole numbers, `primary_only_tables` takes a list of table names, and the block and `replica` take only the keys in the table above. Anything else, `'enabled' => 'off'`, `'max_lag' => '2s'`, a `replica.port`, a key spelled wrong, is refused with its key and what it got, because reading it as a default would mean something nobody chose. **The kill switch is read first and on its own**, so `'enabled' => false` switches the module off whatever else in the block is wrong.
 
 **The replica is opened with the primary's `driver_options`**, its TLS settings among them, since the block takes only a host, a database name and credentials for the replica. A replica that needs different TLS options from the primary's cannot be given them yet.
 
@@ -168,6 +171,7 @@ What it prints, one state each. In use:
 ```text
 Read split: active
 Replica: db-replica.example, port 3306, database store
+Settings: max_lag 30 s, position lifetime 60 s, pooled no, read timeout 5 s, connect timeout 2 s
 Breaker: closed
 ```
 
@@ -176,7 +180,17 @@ In use, with the replica taken out on this node:
 ```text
 Read split: active
 Replica: db-replica.example, port 3306, database store
+Settings: max_lag 30 s, position lifetime 60 s, pooled no, read timeout 5 s, connect timeout 2 s
 Breaker: open, retried in 20 seconds, kept in var/
+```
+
+Run by a user who cannot write `var/`, typically a deploy user where the web server owns it:
+
+```text
+Read split: active
+Replica: db-replica.example, port 3306, database store
+Settings: max_lag 30 s, position lifetime 60 s, pooled no, read timeout 5 s, connect timeout 2 s
+Breaker: unknown from here. var/ is not writable by this user, so the web server keeps its markers in a directory of its own under the system temp directory. Run this as the web server's user.
 ```
 
 No block in `env.php`, which passes:
@@ -198,7 +212,7 @@ Read split: configured but not in use
 Reason: db/read_split has no replica host
 ```
 
-The other reasons are `db/read_split is not a list of settings`, `db/read_split names a connection other than "default", and only the default connection can be split`, `db/connection/default, the connection db/read_split splits, does not exist` and `the replica has no database name: set replica.dbname, or dbname on the connection`. The breaker line is this node's, since each node keeps its own.
+The other reasons are `db/read_split is not a list of settings`, `db/read_split names a connection other than "default", and only the default connection can be split`, `db/connection/default, the connection db/read_split splits, does not exist` and `the replica has no database name: set replica.dbname, or dbname on the connection`. A mistyped setting gives a reason that names its key, such as `pooled takes true or false, and got "yes"`. The breaker line is this node's, since each node keeps its own.
 
 **Turning it off:** set `'enabled' => false`, or remove the block. The next request runs Magento's own adapter. On a server where PHP caches compiled files without checking their timestamps (`opcache.validate_timestamps=0`), PHP only sees the changed `env.php` after its cache is reset, so reload PHP-FPM too. `bin/magento module:disable Kingletas_ReadSplit` removes it entirely.
 
@@ -220,7 +234,7 @@ The GTID check is only true on the backend that then serves the reads. **With `p
 
 **Connections can double.** Every PHP worker that reads holds a replica connection as well as its primary one, so a store with 50 PHP-FPM workers per node and three nodes can hold 150 connections to the primary and 150 to the replica. The replica connection opens only at the first statement that may go there, so a request that writes first never opens it, but most storefront requests read first. Size the replica's `max_connections` for as many connections as the primary serves, and if that runs out, a pooling proxy in front of the replica is the fix, set with `pooled: true`.
 
-**A page a cache stores can be stored stale.** A price or a stock figure changes on the primary and Magento purges the pages that show it. The next visitor to ask for one of them gets a fresh render, and if that render reads from a replica that has not applied the change yet, the old page goes back into Varnish or the built-in page cache for its full lifetime. Nobody's cookie helps: the visitor who filled the cache wrote nothing. **The module does not prevent this in this version.** What bounds it is how far behind the replica is at that moment, and lag is worst during a full reindex, which is also when most purges happen. So on a store with a page cache, **set `max_lag` to a second or two**, which takes a replica that falls further behind out of use at the next check, and expect a purged page to be re-rendered from the primary while it is out. A replica that cannot stay within that is not ready for cached pages.
+**A page a cache stores can be stored stale.** A price or a stock figure changes on the primary and Magento purges the pages that show it. The next visitor to ask for one of them gets a fresh render, and if that render reads from a replica that has not applied the change yet, the old page goes back into Varnish or the built-in page cache for its full lifetime. Nobody's cookie helps: the visitor who filled the cache wrote nothing. **The module does not prevent this in this version.** What bounds it is how far behind the replica is at that moment, and lag is worst during a full reindex, which is also when most purges happen. So on a store with a page cache, **set `max_lag` to a second or two**, which takes a replica that falls further behind out of use at the next check, and expect a purged page to be re-rendered from the primary while it is out. A replica that cannot stay within that is not ready for cached pages. The same holds for any cache a storefront `GET` fills after an invalidation, block output and translations among them; the page cache is the one a visitor sees.
 
 **The read-after-write check needs MariaDB with GTID replication.** `@@gtid_binlog_pos` and `MASTER_GTID_WAIT` are MariaDB's. When the primary cannot give a position, with binary logging off for one, every position reads as unknown and holds the visitor on the primary for its lifetime, so nothing reads stale data, but visitors who have just written get no offload. MySQL does not get that far: see [Requirements](#requirements).
 
@@ -233,6 +247,8 @@ The GTID check is only true on the backend that then serves the reads. **With `p
 **The breaker is per node only if `var/` is.** A `var/` shared between web servers shares the breaker too, which still keeps every read correct.
 
 **Only the default connection is split, and every connection that reaches the same server and database counts as it.** A stock `env.php` gives the `indexer` connection the same host and database as `default`, so its reads are split by the same rules, which on a storefront `GET` changes nothing. A connection to another server or database runs Magento's own adapter, and a write made through it is not seen by this module.
+
+**A runtime that calls itself the command line is never split.** The module leaves the command line alone, and knows it by PHP's own name for how it was started. An application server such as RoadRunner or Swoole starts PHP as the command line, so under one every read stays on the primary while the status command says active.
 
 **A read that writes cannot be seen from the SQL.** A `SELECT` that calls a stored function which writes would go to the replica, where it fails and falls back, or writes to the replica. Magento's own code does not do this; check a third-party module that uses stored functions before turning it on.
 
@@ -280,7 +296,7 @@ In production mode, also run `bin/magento setup:di:compile`. The module does not
 
 ## Requirements
 
-PHP 8.3 or 8.4, Mage-OS or Magento Open Source 2.4.8 or later, and a MariaDB 10.5 or later replica fed by GTID replication, for the read-after-write check and `SHOW REPLICA STATUS`. PHP's `posix` extension is needed only for the breaker's fallback when `var/` cannot be written.
+PHP 8.3 or later (the suites run on 8.3 and 8.4), Mage-OS or Magento Open Source 2.4.8 or later, and a MariaDB 10.5 or later replica fed by GTID replication, for the read-after-write check and `SHOW REPLICA STATUS`. PHP's `posix` extension is needed only for the breaker's fallback when `var/` cannot be written.
 
 **It is built for MariaDB, and it has not been run on MySQL.** Read from the code: the replica's connection is set up with `max_statement_time`, a MariaDB variable MySQL does not have, so on MySQL opening the replica would fail, the breaker would keep it out of use, and every read would stay on the primary with a warning in the log. The position and the check for it are MariaDB's too.
 
