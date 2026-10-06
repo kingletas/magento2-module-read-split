@@ -89,6 +89,47 @@ class ReplicaBreakerRoutingTest extends SplitAdapterTestCase
         $this->assertSame(1, $this->replica->connects);
     }
 
+    /**
+     * A table the replica does not have, or a grant its user lacks, once made the breaker open and close for ever.
+     */
+    public function testAStatementOnlyTheReplicaRefusesLeavesTheBreakerClosedAndIsSaidOnce(): void
+    {
+        $words = "SELECT command denied to user 'invented_reader'@'%' for table `invented_report`";
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->once())->method('warning')->with($this->stringContains($words));
+        $this->replica->failOn = '/invented_report/';
+        $this->replica->failWith = $this->databaseError(1142, '42000', $words);
+
+        for ($request = 0; $request < 3; ++$request) {
+            $adapter = $this->adapter();
+            $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM invented_report'));
+            $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM store'), 'The rest of it');
+            $this->clock->advance(40);
+        }
+
+        $this->assertSame([], $this->breakerMarkers());
+        $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM store'));
+    }
+
+    public function testAStatementBothServersRefuseSaysNothingAboutTheReplica(): void
+    {
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->logger->expects($this->never())->method('warning');
+        $this->replica->failOn = '/invented_missing_table/';
+        $words = "Table 'store.invented_missing_table' doesn't exist";
+        $this->replica->failWith = $this->databaseError(1146, '42S02', $words);
+        $this->primary->failOn = '/invented_missing_table/';
+
+        try {
+            $this->answeredBy($this->adapter(), 'SELECT * FROM invented_missing_table');
+            $this->fail('The primary should have refused the statement too');
+        } catch (Throwable) {
+            // The statement is wrong everywhere, which is the caller's to hear and not the log's.
+        }
+
+        $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM store'));
+    }
+
     public function testATripForAFailedStatementSaysWhatFailed(): void
     {
         $this->logger = $this->createMock(LoggerInterface::class);

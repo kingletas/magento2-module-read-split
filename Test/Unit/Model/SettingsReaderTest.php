@@ -182,7 +182,7 @@ class SettingsReaderTest extends TestCase
 
         $this->assertFalse($settings->isActive());
         $this->assertSame(SettingsState::Refused, $settings->state());
-        $this->assertStringContainsString(is_array($block) ? 'replica host' : 'db/read_split', $settings->reason());
+        $this->assertStringContainsString(is_array($block) ? 'replica' : 'db/read_split', $settings->reason());
     }
 
     public function testAReplicaWithNoDatabaseNameIsRefusedWhenTheSettingsAreRead(): void
@@ -312,16 +312,92 @@ class SettingsReaderTest extends TestCase
         $this->assertFalse($settings->positionLifetimeWasRaised(), 'The store asked for longer, not shorter');
     }
 
-    public function testOnlyTheBooleanTrueMakesItPooled(): void
+    public function testPooledTakesTrueOrFalseAsEnvPhpMayWriteThem(): void
     {
-        $this->assertTrue($this->read(['pooled' => true])->isPooled());
-        $this->assertFalse($this->read(['pooled' => 'yes'])->isPooled());
+        foreach ([true, 1, '1', 'true', 'TRUE'] as $pooled) {
+            $this->assertTrue($this->read(['pooled' => $pooled])->isPooled());
+        }
+
+        foreach ([false, 0, '0', 'false'] as $notPooled) {
+            $settings = $this->read(['pooled' => $notPooled]);
+            $this->assertTrue($settings->isActive());
+            $this->assertFalse($settings->isPooled());
+        }
+    }
+
+    /**
+     * @return array<string, array{0: array<string, mixed>, 1: string}>
+     */
+    public static function mistypedSettings(): array
+    {
+        $replica = ['host' => 'db-replica.example'];
+
+        return [
+            'pooled written as a word' => [['pooled' => 'yes'], 'pooled takes true or false, and got "yes"'],
+            'pooled as a number that is neither' => [['pooled' => 2], 'pooled takes true or false, and got 2'],
+            'the kill switch written as off' => [['enabled' => 'off'], 'enabled takes true or false, and got "off"'],
+            'the kill switch left empty' => [['enabled' => ''], 'enabled takes true or false, and got ""'],
+            'max_lag with a unit' => [['max_lag' => '2s'], 'max_lag takes a whole number of seconds, and got "2s"'],
+            'max_lag with a fraction' => [['max_lag' => 1.5], 'max_lag takes a whole number of seconds, and got 1.5'],
+            'a read timeout that is a word' => [['read_timeout' => 'soon'], 'read_timeout takes a whole number'],
+            'a connect timeout that is a list' => [
+                ['connect_timeout' => [2]],
+                'connect_timeout takes a whole number of seconds, and got something that is neither text nor a number',
+            ],
+            'a lifetime that is true' => [['position_lifetime' => true], 'position_lifetime takes a whole number'],
+            'a key nobody knows' => [['max_lagg' => 5], 'a key this version does not know: "max_lagg"'],
+            'a port beside the host' => [
+                ['replica' => $replica + ['port' => '3307']],
+                'replica has a key this version does not know: "port". A port goes in the host, as host:port',
+            ],
+            'a replica password that is not text' => [
+                ['replica' => $replica + ['password' => 12345]],
+                'replica.password takes text, and got 12345',
+            ],
+            'tables that are not a list' => [['primary_only_tables' => 'session'], 'primary_only_tables takes a list'],
+            'a table name with a typo' => [
+                ['primary_only_tables' => ['invented_log', 'bad name; --']],
+                'each a name or a name ending in *, and got "bad name; --"',
+            ],
+            'a star in the middle of a name' => [['primary_only_tables' => ['x*y']], 'and got "x*y"'],
+            'a table that is a number' => [['primary_only_tables' => [7]], 'and got 7'],
+        ];
+    }
+
+    /**
+     * A value of the wrong kind was once read as the default, so a mistyped kill switch left the split on and a
+     * mistyped pooled left the GTID check trusted behind a balancer. Each is now refused, with its key.
+     *
+     * @param array<string, mixed> $block
+     */
+    #[DataProvider('mistypedSettings')]
+    public function testAMistypedSettingIsRefusedByNameAndNeverReadAsADefault(array $block, string $reason): void
+    {
+        $settings = $this->read($block);
+
+        $this->assertSame(SettingsState::Refused, $settings->state());
+        $this->assertFalse($settings->isActive());
+        $this->assertStringContainsString($reason, $settings->reason());
+    }
+
+    public function testTheKillSwitchWorksWhateverElseInTheBlockIsWrong(): void
+    {
+        $settings = $this->read(['enabled' => false, 'max_lag' => 'soon', 'nonsense' => 1, 'pooled' => 'yes']);
+
+        $this->assertSame(SettingsState::SwitchedOff, $settings->state());
+    }
+
+    public function testAReplicaPasswordIsNeverShownInARefusal(): void
+    {
+        $block = ['replica' => ['host' => 'db-replica.example', 'password' => 'invented-secret'], 'pooled' => 'yes'];
+
+        $this->assertStringNotContainsString('invented-secret', $this->read($block)->reason());
     }
 
     public function testConfiguredTablesAndPatternsAreAddedToTheDefaultsWithThePrefix(): void
     {
         $settings = $this->read(
-            ['primary_only_tables' => ['invented_log', 'invented_audit*', 'Session', 'bad name; --', 'x*y', 7]],
+            ['primary_only_tables' => ['invented_log', 'invented_audit*', 'Session']],
             'pfx_'
         );
 
@@ -350,7 +426,6 @@ class SettingsReaderTest extends TestCase
         $this->assertSame(5, $this->read(['max_lag' => 5])->maxLag());
         $this->assertSame(1, $this->read(['max_lag' => 0])->maxLag());
         $this->assertSame(86400, $this->read(['max_lag' => 999999])->maxLag());
-        $this->assertSame(30, $this->read(['max_lag' => 'soon'])->maxLag());
         $this->assertSame(2, $this->read(['read_timeout' => 0])->readTimeout());
         $this->assertSame(2, $this->read(['read_timeout' => 1])->readTimeout(), 'The server stops a query first');
         $this->assertSame(60, $this->read(['read_timeout' => 600])->readTimeout());
@@ -376,7 +451,6 @@ class SettingsReaderTest extends TestCase
             'host' => 'db-replica.example',
             'dbname' => 'invented_copy',
             'password' => 'invented-reader-password',
-            'initStatements' => 'SET NAMES latin1',
         ]], $connection);
 
         $replica = $reader->read($connection)->replicaConfig();

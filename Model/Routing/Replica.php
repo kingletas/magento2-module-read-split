@@ -42,6 +42,11 @@ class Replica
     private string $failed = '';
 
     /**
+     * The server's own words for a statement it refused as wrong for it, until the primary shows it was only here.
+     */
+    private string $refused = '';
+
+    /**
      * @var array<int, array{0: string, 1: mixed}>
      */
     private array $sessionState = [];
@@ -112,6 +117,12 @@ class Replica
                 return null;
             }
 
+            $this->refused = $this->refusal($failure);
+
+            if ($this->refused !== '') {
+                return null;
+            }
+
             $this->unconfirmedFailure = true;
             $this->failed = $this->describe($failure);
 
@@ -124,6 +135,16 @@ class Replica
      */
     public function confirmFailure(): void
     {
+        if ($this->refused !== '') {
+            $this->breaker->warnOccasionally(
+                'refused',
+                'Read split: the replica refused a statement the primary answered, so the primary answers the rest '
+                . 'of that request. The replica stays in use. Its words: ' . $this->refused . ' This is said at most '
+                . 'once an hour on this node.'
+            );
+            $this->refused = '';
+        }
+
         if ($this->unconfirmedFailure) {
             $this->unconfirmedFailure = false;
             $this->breaker->trip('it failed a statement the primary answered (' . $this->failed . ')');
@@ -164,6 +185,7 @@ class Replica
         $this->available = true;
         $this->breakerAllows = null;
         $this->unconfirmedFailure = false;
+        $this->refused = '';
         $this->sessionState = [];
     }
 
@@ -216,6 +238,21 @@ class Replica
         }
 
         return false;
+    }
+
+    /**
+     * What the server said when it refused a statement as wrong for it, a missing table or grant: SQLSTATE class 42.
+     * That is the statement's fault on this server, not a sign the server is unwell; empty for any other failure.
+     */
+    private function refusal(Throwable $failure): string
+    {
+        for ($cause = $failure; $cause !== null; $cause = $cause->getPrevious()) {
+            if ($cause instanceof PDOException && str_starts_with((string) ($cause->errorInfo[0] ?? ''), '42')) {
+                return trim((string) ($cause->errorInfo[2] ?? $cause->getMessage()));
+            }
+        }
+
+        return '';
     }
 
     private function sayAStatementRanTooLong(): void

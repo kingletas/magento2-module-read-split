@@ -106,6 +106,19 @@ class Breaker implements ResetAfterRequestInterface
     }
 
     /**
+     * Whether whoever asks can see the markers the web server keeps: false when var/ is not theirs to write, since
+     * the web server then keeps its markers in a directory of its own that another user looks past.
+     */
+    public function isSeenFromHere(): bool
+    {
+        try {
+            return $this->file->isWritable((string) $this->directoryList->getPath(DirectoryList::VAR_DIR));
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    /**
      * Whether this request is the one retrying an open breaker.
      */
     public function isProbing(): bool

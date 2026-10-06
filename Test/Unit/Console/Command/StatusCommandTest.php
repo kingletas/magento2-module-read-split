@@ -32,6 +32,10 @@ class StatusCommandTest extends SplitAdapterTestCase
         $this->assertStringContainsString('3307', $display);
         $this->assertStringContainsString('invented_store', $display);
         $this->assertStringContainsString('closed', $display);
+        $this->assertStringContainsString(
+            'Settings: max_lag 30 s, position lifetime 60 s, pooled no, read timeout 5 s, connect timeout 2 s',
+            $display
+        );
         $this->assertStringNotContainsString('invented-reader-secret', $display);
         $this->assertStringNotContainsString('invented-password', $display);
     }
@@ -46,6 +50,21 @@ class StatusCommandTest extends SplitAdapterTestCase
         $this->assertStringContainsString('open', $display);
         $this->assertStringContainsString('20', $display);
         $this->assertStringContainsString('var/', $display);
+    }
+
+    /**
+     * Run by a deploy user who cannot write var/, it once printed "closed" while the web server's breaker was open.
+     */
+    public function testWhenVarIsNotTheCallersTheBreakerIsSaidToBeUnknownFromHere(): void
+    {
+        $this->makeVarUnwritable();
+
+        $tester = $this->runCommand(['replica' => ['host' => 'db-replica.example']]);
+
+        $this->assertSame(Command::SUCCESS, $tester->getStatusCode());
+        $this->assertStringContainsString('active', $tester->getDisplay());
+        $this->assertStringContainsString('Breaker: unknown from here', $tester->getDisplay());
+        $this->assertStringNotContainsString('closed', $tester->getDisplay());
     }
 
     public function testAConfiguredBlockThatIsNotInUseFailsWithTheReason(): void

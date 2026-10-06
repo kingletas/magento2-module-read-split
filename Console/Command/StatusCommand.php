@@ -13,6 +13,7 @@ use Kingletas\ReadSplit\Model\Replica\Breaker;
 use Kingletas\ReadSplit\Model\Settings;
 use Kingletas\ReadSplit\Model\SettingsReader;
 use Kingletas\ReadSplit\Model\SettingsState;
+use PDO;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -65,8 +66,27 @@ class StatusCommand extends Command
     {
         [$host, $port, $dbname] = $settings->replicaIdentity();
         $output->writeln((string) __('Replica: %1, port %2, database %3', $host, $port, $dbname));
+        $output->writeln((string) __(
+            'Settings: max_lag %1 s, position lifetime %2 s, pooled %3, read timeout %4 s, connect timeout %5 s',
+            $settings->maxLag(),
+            $settings->positionLifetime(),
+            $settings->isPooled() ? 'yes' : 'no',
+            $settings->readTimeout(),
+            $settings->replicaConfig()['driver_options'][PDO::ATTR_TIMEOUT] ?? '?'
+        ));
 
-        $open = $this->breaker->withReplicaHost($host . ':' . $port)->openState();
+        $breaker = $this->breaker->withReplicaHost($host . ':' . $port);
+
+        if (!$breaker->isSeenFromHere()) {
+            $output->writeln((string) __(
+                'Breaker: unknown from here. var/ is not writable by this user, so the web server keeps its markers '
+                . 'in a directory of its own under the system temp directory. Run this as the web server\'s user.'
+            ));
+
+            return;
+        }
+
+        $open = $breaker->openState();
         $output->writeln(
             $open === null
                 ? (string) __('Breaker: closed')

@@ -53,10 +53,13 @@ class SettingsReader
 
     private readonly ConnectionIdentity $connectionIdentity;
 
+    private readonly SettingsCheck $settingsCheck;
+
     public function __construct(
         private readonly DeploymentConfig $deploymentConfig
     ) {
         $this->connectionIdentity = new ConnectionIdentity();
+        $this->settingsCheck = new SettingsCheck();
     }
 
     /**
@@ -76,35 +79,42 @@ class SettingsReader
             return new Settings(SettingsState::Refused, 'db/read_split is not a list of settings');
         }
 
-        if (!$this->isSwitchedOn($block)) {
+        // The kill switch is read first and alone, so it works whatever else in the block is wrong.
+        if ($this->settingsCheck->flag($block['enabled'] ?? true) === false) {
             return new Settings(SettingsState::SwitchedOff);
         }
 
-        if (($block['connection'] ?? self::CONNECTION) !== self::CONNECTION) {
-            return new Settings(
-                SettingsState::Refused,
-                'db/read_split names a connection other than "default", and only the default connection can be split'
-            );
-        }
-
         $target = $this->deploymentConfig->get('db/connection/' . self::CONNECTION);
+        $mistake = $this->settingsCheck->mistake($block) ?? $this->targetMistake($block, $target);
 
-        if (!is_array($target)) {
-            return new Settings(
-                SettingsState::Refused,
-                'db/connection/default, the connection db/read_split splits, does not exist'
-            );
+        if ($mistake !== null) {
+            return new Settings(SettingsState::Refused, $mistake);
         }
 
-        if ($this->connectionIdentity->of($target)[0] === '') {
-            return new Settings(SettingsState::Refused, 'db/connection/default has no host');
-        }
-
-        if (!$this->connectionIdentity->same($target, $connectionConfig)) {
+        if (!$this->connectionIdentity->same((array) $target, $connectionConfig)) {
             return new Settings(SettingsState::OtherConnection);
         }
 
         return $this->forConnection($connectionConfig, $block);
+    }
+
+    /**
+     * Why the connection the block splits cannot be split, or null when it can.
+     *
+     * @param array<mixed> $block
+     */
+    private function targetMistake(array $block, mixed $target): ?string
+    {
+        if (($block['connection'] ?? self::CONNECTION) !== self::CONNECTION) {
+            return 'db/read_split names a connection other than "default", and only the default connection '
+                . 'can be split';
+        }
+
+        if (!is_array($target)) {
+            return 'db/connection/default, the connection db/read_split splits, does not exist';
+        }
+
+        return $this->connectionIdentity->of($target)[0] === '' ? 'db/connection/default has no host' : null;
     }
 
     /**
@@ -144,23 +154,13 @@ class SettingsReader
         return new Settings(
             state: SettingsState::Active,
             replicaConfig: $replica,
-            pooled: ($block['pooled'] ?? false) === true,
+            pooled: $this->settingsCheck->flag($block['pooled'] ?? false) === true,
             primaryOnlyTables: $this->primaryOnlyTables($block['primary_only_tables'] ?? []),
             positionLifetime: max($shortest, min($lifetime ?? 0, self::USUAL_LONGEST_LIFETIME)),
             maxLag: $maxLag,
             readTimeout: $this->bounded($block['read_timeout'] ?? null, 5, 2, 60),
             positionLifetimeWasRaised: $lifetime !== null && $lifetime < $shortest
         );
-    }
-
-    /**
-     * @param array<mixed> $block
-     */
-    private function isSwitchedOn(array $block): bool
-    {
-        $enabled = $block['enabled'] ?? true;
-
-        return !in_array($enabled, [false, 0, '0', 'false', ''], true);
     }
 
     /**
@@ -202,7 +202,6 @@ class SettingsReader
      */
     private function primaryOnlyTables(mixed $configured): array
     {
-        $prefix = (string) $this->deploymentConfig->get(ConfigOptionsListConstants::CONFIG_PATH_DB_PREFIX);
         $names = self::DEFAULT_PRIMARY_ONLY;
 
         foreach (is_array($configured) ? $configured : [] as $table) {
@@ -210,6 +209,19 @@ class SettingsReader
                 $names[] = $table;
             }
         }
+
+        return $this->prefixed($names);
+    }
+
+    /**
+     * Table names in lower case with the store's table prefix, each once.
+     *
+     * @param string[] $names
+     * @return string[]
+     */
+    private function prefixed(array $names): array
+    {
+        $prefix = (string) $this->deploymentConfig->get(ConfigOptionsListConstants::CONFIG_PATH_DB_PREFIX);
 
         return array_values(array_unique(array_map(
             static fn (string $table): string => strtolower($prefix . $table),
@@ -227,6 +239,6 @@ class SettingsReader
      */
     private function number(mixed $value): ?int
     {
-        return is_int($value) || (is_string($value) && ctype_digit($value)) ? (int) $value : null;
+        return $this->settingsCheck->number($value);
     }
 }
