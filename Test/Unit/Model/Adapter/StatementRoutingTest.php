@@ -228,8 +228,8 @@ class StatementRoutingTest extends SplitAdapterTestCase
         $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM invented_log WHERE id = 3'));
         $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM invented_audit_entry WHERE id = 3'));
         $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM session WHERE session_id = 1'));
-        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM quote WHERE entity_id = 3'));
         $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM invented_logbook WHERE id = 3'));
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM quote WHERE entity_id = 3'));
     }
 
     /**
@@ -293,17 +293,60 @@ class StatementRoutingTest extends SplitAdapterTestCase
     public static function readsThatCouldMakeMagentoWriteSomethingWrong(): array
     {
         return [
+            'the order' => ['SELECT * FROM `sales_order` WHERE (entity_id = 82)'],
+            'order items' => ['SELECT * FROM sales_order_item WHERE order_id = 82'],
+            'the order grid' => ['SELECT * FROM sales_order_grid WHERE entity_id = 82'],
+            'a customer' => ['SELECT * FROM customer_entity WHERE entity_id = 4'],
+        ];
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function readsOfTheCart(): array
+    {
+        return [
             'the quote' => ['SELECT `main_table`.* FROM `quote` AS `main_table` WHERE (entity_id = 707)'],
             'quote items' => ['SELECT * FROM `quote_item` WHERE (quote_id = 707)'],
             'quote addresses' => ['SELECT * FROM quote_address WHERE quote_id = 707'],
             'a quote item option' => ['SELECT * FROM quote_item_option WHERE item_id = 9'],
             'shipping rates' => ['SELECT * FROM quote_shipping_rate WHERE address_id = 9'],
             'the masked cart id' => ['SELECT * FROM quote_id_mask WHERE masked_id = ?'],
-            'the order' => ['SELECT * FROM `sales_order` WHERE (entity_id = 82)'],
-            'order items' => ['SELECT * FROM sales_order_item WHERE order_id = 82'],
-            'the order grid' => ['SELECT * FROM sales_order_grid WHERE entity_id = 82'],
             'a join onto the quote' => ['SELECT p.* FROM cms_page AS p INNER JOIN quote_item AS q ON q.item_id = p.id'],
         ];
+    }
+
+    /**
+     * A cart read from the primary beside prices and stock read from a replica that is behind was once totalled
+     * from the two, and the totals were saved.
+     */
+    #[DataProvider('readsOfTheCart')]
+    public function testAReadOfTheCartSendsTheRestOfTheRequestToThePrimary(string $sql): void
+    {
+        $adapter = $this->adapter();
+
+        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM store'), 'Before the cart is read');
+        $this->assertSame('primary', $this->answeredBy($adapter, $sql));
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM catalog_product_entity'));
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM cataloginventory_stock_item'));
+        $this->assertSame('replica', $this->answeredBy($this->adapter(), 'SELECT * FROM store'), 'The next request');
+    }
+
+    public function testTheCartsTablesFollowTheTablePrefix(): void
+    {
+        $adapter = $this->adapter([], 'invented_');
+
+        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM quote_item'), 'No such table here');
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM invented_quote_item'));
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM invented_store'));
+    }
+
+    public function testATableTheStoreAddsToTheListDoesNotPin(): void
+    {
+        $adapter = $this->adapter(['primary_only_tables' => ['invented_quote*']]);
+
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM invented_quote_log'));
+        $this->assertSame('replica', $this->answeredBy($adapter, 'SELECT * FROM store'));
     }
 
     /**

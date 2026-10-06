@@ -270,7 +270,7 @@ class SettingsReaderTest extends TestCase
                 'login_as_customer',
                 'downloadable_link_purchased*',
             ],
-            $settings->primaryOnlyTables()
+            $settings->primaryOnlyTables()->names()
         );
     }
 
@@ -436,8 +436,9 @@ class SettingsReaderTest extends TestCase
                 'pfx_invented_log',
                 'pfx_invented_audit*',
             ],
-            $settings->primaryOnlyTables()
+            $settings->primaryOnlyTables()->names()
         );
+        $this->assertSame(['pfx_quote*'], $settings->primaryOnlyTables()->pinning(), 'Only the cart pins');
     }
 
     public function testNumbersAreKeptWithinTheirBounds(): void

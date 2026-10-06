@@ -36,6 +36,8 @@ class Router
 
     private readonly string $primaryOnlyPattern;
 
+    private readonly string $pinningPattern;
+
     public function __construct(
         private readonly Settings $settings,
         private readonly Classifier $classifier,
@@ -44,7 +46,8 @@ class Router
         private readonly WriteLedger $writeLedger,
         private readonly Replica $replica
     ) {
-        $this->primaryOnlyPattern = $this->tablePattern($settings->primaryOnlyTables());
+        $this->primaryOnlyPattern = $this->tablePattern($settings->primaryOnlyTables()->names());
+        $this->pinningPattern = $this->tablePattern($settings->primaryOnlyTables()->pinning());
     }
 
     public function route(string $sql, int $transactionLevel): Route
@@ -146,7 +149,16 @@ class Router
 
     private function routeRead(Classification $statement, int $transactionLevel): Route
     {
-        if ($this->pinned || $transactionLevel > 0 || $statement->mentions($this->primaryOnlyPattern)) {
+        if ($this->pinned || $transactionLevel > 0) {
+            return Route::Primary;
+        }
+
+        // What follows a read of the cart is read where the cart was: its products, prices and stock.
+        if ($statement->mentions($this->pinningPattern)) {
+            return $this->pin();
+        }
+
+        if ($statement->mentions($this->primaryOnlyPattern)) {
             return Route::Primary;
         }
 

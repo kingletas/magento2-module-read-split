@@ -16,14 +16,13 @@ class Settings
 {
     /**
      * @param array<string, mixed> $replicaConfig the connection config the replica is opened with
-     * @param string[] $primaryOnlyTables table names as the database knows them, prefix included
      */
     public function __construct(
         private readonly SettingsState $state,
         private readonly string $reason = '',
         private readonly array $replicaConfig = [],
         private readonly bool $pooled = false,
-        private readonly array $primaryOnlyTables = [],
+        private readonly PrimaryOnlyTables $primaryOnlyTables = new PrimaryOnlyTables(),
         private readonly int $positionLifetime = 30,
         private readonly int $maxLag = 30,
         private readonly int $readTimeout = 5,
@@ -78,10 +77,7 @@ class Settings
         return $this->pooled;
     }
 
-    /**
-     * @return string[]
-     */
-    public function primaryOnlyTables(): array
+    public function primaryOnlyTables(): PrimaryOnlyTables
     {
         return $this->primaryOnlyTables;
     }

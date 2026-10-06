@@ -47,6 +47,11 @@ class SettingsReader
     ];
 
     /**
+     * The cart's tables: what a request reads after its cart, products, prices and stock, has to match the cart.
+     */
+    private const array PINNING = ['quote*'];
+
+    /**
      * The longest a visitor's position is carried, unless the lag the store allows needs it carried longer.
      */
     private const int USUAL_LONGEST_LIFETIME = 300;
@@ -155,7 +160,10 @@ class SettingsReader
             state: SettingsState::Active,
             replicaConfig: $replica,
             pooled: $this->settingsCheck->flag($block['pooled'] ?? false) === true,
-            primaryOnlyTables: $this->primaryOnlyTables($block['primary_only_tables'] ?? []),
+            primaryOnlyTables: new PrimaryOnlyTables(
+                $this->primaryOnlyTables($block['primary_only_tables'] ?? []),
+                $this->prefixed(self::PINNING)
+            ),
             positionLifetime: max($shortest, min($lifetime ?? 0, self::USUAL_LONGEST_LIFETIME)),
             maxLag: $maxLag,
             readTimeout: $this->bounded($block['read_timeout'] ?? null, 5, 2, 60),
