@@ -463,6 +463,34 @@ class StatementRoutingTest extends SplitAdapterTestCase
         $this->assertFalse($this->ledger->hasWritten());
     }
 
+    /**
+     * A cart read that reaches the primary outside the query path is still a cart read.
+     */
+    public function testACartReadPreparedOutsideTheQueryPathPinsTheRequestWithoutCountingAsAWrite(): void
+    {
+        $adapter = $this->adapter();
+
+        $adapter->prepare('SELECT * FROM quote WHERE entity_id = 3')->execute();
+
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM store'));
+        $this->assertFalse($this->ledger->hasWritten());
+    }
+
+    public function testACartReadUnderAQueryHookPinsTheRequest(): void
+    {
+        $adapter = $this->adapter();
+        $hook = ['object' => new class {
+            public function observe(string $sql, array $bind): void
+            {
+            }
+        }, 'method' => 'observe'];
+        $adapter->setQueryHook($hook);
+        $this->answeredBy($adapter, 'SELECT * FROM quote_item WHERE quote_id = 3');
+        $adapter->setQueryHook(null);
+
+        $this->assertSame('primary', $this->answeredBy($adapter, 'SELECT * FROM store'));
+    }
+
     public function testAWriteRunThroughExecPinsTheRequest(): void
     {
         $adapter = $this->adapter();

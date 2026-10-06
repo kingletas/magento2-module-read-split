@@ -76,8 +76,12 @@ class Router
             return;
         }
 
-        match ($this->classifier->classify($sql)->kind()) {
-            StatementKind::Read, StatementKind::PrimaryRead => null,
+        $statement = $this->classifier->classify($sql);
+
+        match ($statement->kind()) {
+            // A read of the cart pins wherever it runs, so what follows it is read where the cart was.
+            StatementKind::Read => $statement->mentions($this->pinningPattern) ? $this->pin() : null,
+            StatementKind::PrimaryRead => null,
             StatementKind::Write => $this->write(),
             // Session state set outside routing is never replayed, so the replica could not match it.
             StatementKind::SessionState, StatementKind::PinningRead => $this->pin(),

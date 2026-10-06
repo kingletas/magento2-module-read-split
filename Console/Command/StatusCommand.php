@@ -82,7 +82,8 @@ class StatusCommand extends Command
         if ($hidden !== '') {
             $output->writeln((string) __(
                 'Breaker: unknown from here. The web server may keep its markers in %1, where this user does not '
-                . 'look. Run this as the web server\'s user.',
+                . 'look. Run this as the user PHP serves requests as; if that is this user, that directory is '
+                . 'left over and can be removed.',
                 $hidden
             ));
 

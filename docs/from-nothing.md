@@ -130,7 +130,7 @@ That is the working state. **If it says something else:**
 | `Read split: configured but not in use`, then a `Reason:` line | The block is there and cannot be used. The reason names what is missing, and the command exits non-zero, so a deploy can stop on it |
 | `Read split: not configured` | The store did not find the block. It is inside a connection, or its key is not `read_split` under `db` |
 | `Read split: switched off in env.php` | The block has `'enabled' => false` |
-| `Breaker: unknown from here` | The command found a place the web server may keep its markers where your user does not look, and names it. Run it as the web server's user to see that node's breaker |
+| `Breaker: unknown from here` | The command found a place the web server may keep its markers where your user does not look, and names it. Run it as the user PHP serves requests as to see that node's breaker; if that is you, the directory it names is left over and can be removed |
 
 The breaker line only changes once a storefront request has tried the replica, which is the next step.
 
