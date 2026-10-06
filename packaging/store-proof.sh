@@ -19,9 +19,11 @@
 # servers themselves: each one's Com_select before and after a batch of plain
 # reads through the store's own connection.
 #
-# It writes the db/read_split block into app/etc/env.php, three ways, and puts
-# the file back as it found it. It does not assert read-after-write across two
-# requests, which rides a cookie only a full page response sets.
+# It writes the db/read_split block into app/etc/env.php, three ways, puts the
+# file back as it found it, and asks PHP-FPM to drop the copy it holds, since a
+# store that does not re-read changed files would go on routing by the last
+# block written. It does not assert read-after-write across two requests, which
+# rides a cookie only a full page response sets.
 
 set -euo pipefail
 
@@ -97,6 +99,12 @@ cleanup() {
 	if [ -f "$ENV_KEPT" ]; then
 		cp -p "$ENV_KEPT" "$ENV_FILE" && rm -f "$ENV_KEPT"
 	fi
+	# PHP-FPM may still hold the last block this run wrote, and where it does not re-read a changed file it
+	# would keep it until restarted. The probe is the only thing that can tell it to let go, so it is asked
+	# before it is removed.
+	if [ -f "$PROBE" ]; then
+		$STORE_PROOF_PHP "/app/local.d/${PROBE_FILE}" web "$FPM" "drop=1" >/dev/null 2>&1 || true
+	fi
 	rm -f "$PROBE"
 	# The breaker's markers this run made, for the host that never answered and for the replica. One that was
 	# there before the run is the store's own, and stays.
@@ -138,11 +146,21 @@ cat > "$PROBE" <<-'PHP'
 	};
 
 	if (PHP_SAPI !== 'cli') {
-	    // The storefront request. env.php may have been rewritten a moment ago, and a cached copy would route by the old block.
+	    header('Content-Type: text/plain');
+	    if (isset($_GET['see'])) {
+	        // Which replica host PHP-FPM's own copy of env.php names, as it stands, without asking it to re-read.
+	        $seen = include ENV_PHP;
+	        $answer(['block' => $seen['db']['read_split']['replica']['host'] ?? 'none']);
+	        exit(0);
+	    }
+	    // env.php may have been rewritten a moment ago, and a cached copy would route by the old block.
 	    if (function_exists('opcache_invalidate')) {
 	        opcache_invalidate(ENV_PHP, true);
 	    }
-	    header('Content-Type: text/plain');
+	    if (isset($_GET['drop'])) {
+	        $answer(['dropped' => 1]);
+	        exit(0);
+	    }
 	    require '/app/app/bootstrap.php';
 	    $objectManager = Bootstrap::create(BP, $_SERVER)->getObjectManager();
 	    $objectManager->get(State::class)->setAreaCode('frontend');
@@ -328,6 +346,8 @@ replica_marker="$(field "$(ask marker "${REPLICA_HOST}:3306")" name)"
 dead_marker="$(field "$(ask marker "${DEAD_HOST}:3306")" name)"
 markers_before="$(ls "${STORE_PROOF_STORE}/var/${replica_marker}".* "${STORE_PROOF_STORE}/var/${dead_marker}".* 2>/dev/null || true)"
 
+block_before="$(field "$(ask web "$FPM" "see=1")" block)"
+
 [ ! -e "$ENV_KEPT" ] || stop "${ENV_KEPT} is left from a run that did not finish. It is the store's env.php from before that run: put it back, then delete it"
 cp -p "$ENV_FILE" "$ENV_KEPT"
 
@@ -377,8 +397,14 @@ run="$(counted "reads=${READS}")"
 status="$(magento kingletas:read-split:status)"
 grep -q 'Breaker: open' <<< "$status" || bad "the breaker did not open for a replica that does not answer: $(tail -1 <<< "$status")"
 
-step "app/etc/env.php is put back as it was"
+step "app/etc/env.php is put back as it was, and PHP-FPM lets go of the copy it held"
 cp -p "$ENV_KEPT" "$ENV_FILE" && rm -f "$ENV_KEPT"
+held="$(field "$(ask web "$FPM" "see=1")" block)"
+[ "$(field "$(ask web "$FPM" "drop=1")" dropped)" = "1" ] || bad "PHP-FPM could not be asked to drop its copy of env.php"
+block_after="$(field "$(ask web "$FPM" "see=1")" block)"
+step "PHP-FPM named the replica '${block_before}' before the proof, held '${held}' once the file was back, and names '${block_after}' now"
+[ "$block_after" = "$block_before" ] \
+	|| bad "PHP-FPM still routes by '${block_after}', not the '${block_before}' the store had before the proof. Restart PHP-FPM"
 
 [ "$failures" -eq 0 ] || { printf '    %s assertion(s) failed\n' "$failures" >&2; exit 1; }
 step "every assertion held"
