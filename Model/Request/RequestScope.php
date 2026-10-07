@@ -23,11 +23,16 @@ class RequestScope implements RequestScopeInterface
 
     private const array METHODS = ['GET', 'HEAD'];
 
+    private readonly string $sapi;
+
     public function __construct(
         private readonly State $state,
         private readonly HttpRequest $request,
-        private readonly string $sapi = PHP_SAPI
+        ?string $sapi = null
     ) {
+        // Read here and not as the argument's default: setup:di:compile runs on the command line and copies every
+        // default into the store's generated metadata, so a default of PHP_SAPI would say "cli" to every request.
+        $this->sapi = $sapi ?? PHP_SAPI;
     }
 
     public function isCommandLine(): bool

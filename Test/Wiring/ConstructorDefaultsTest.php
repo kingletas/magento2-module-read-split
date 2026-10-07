@@ -21,6 +21,7 @@ use UnitEnum;
 /**
  * What setup:di:compile can copy: it writes every constructor default into the store's generated metadata with
  * var_export, and an object written that way is a call to a __set_state() no class here has, so the store stops.
+ * It runs on the command line, so a default taken from the runtime is frozen as the command line's value.
  */
 class ConstructorDefaultsTest extends TestCase
 {
@@ -53,12 +54,31 @@ class ConstructorDefaultsTest extends TestCase
         self::assertSame([], $objects, $class . ' gives these arguments an object as their default');
     }
 
+    #[DataProvider('classes')]
+    public function testNoConstructorDefaultIsAConstantOfTheRuntime(string $class): void
+    {
+        $constructor = (new ReflectionClass($class))->getConstructor();
+        $constants = [];
+
+        foreach ($constructor?->getParameters() ?? [] as $parameter) {
+            // A class constant is the code's own and the same wherever it is read; PHP_SAPI and its like are not.
+            if ($parameter->isDefaultValueAvailable() && $parameter->isDefaultValueConstant()
+                && !str_contains((string) $parameter->getDefaultValueConstantName(), '::')
+            ) {
+                $constants[] = '$' . $parameter->getName() . ' = ' . $parameter->getDefaultValueConstantName();
+            }
+        }
+
+        self::assertSame([], $constants, $class . ' takes these defaults from where it is compiled');
+    }
+
     public function testTheSearchFindsTheModulesClasses(): void
     {
         $classes = array_column(self::classes(), 0);
 
         self::assertContains(\Kingletas\ReadSplit\Model\Settings::class, $classes);
         self::assertContains(\Kingletas\ReadSplit\Model\Adapter\ReadSplitMysql::class, $classes);
+        self::assertContains(\Kingletas\ReadSplit\Model\Request\RequestScope::class, $classes);
     }
 
     /**
