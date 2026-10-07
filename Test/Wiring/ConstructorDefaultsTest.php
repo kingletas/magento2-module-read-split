@@ -27,8 +27,6 @@ class ConstructorDefaultsTest extends TestCase
 {
     private const string MODULE = __DIR__ . '/../..';
 
-    private const array NOT_SHIPPED_CODE = ['Test', 'vendor', 'packaging', '.github', 'docs', 'local.d'];
-
     #[DataProvider('classes')]
     public function testNoConstructorDefaultIsAnObject(string $class): void
     {
@@ -94,10 +92,7 @@ class ConstructorDefaultsTest extends TestCase
         foreach ($files as $file) {
             $path = substr($file->getPathname(), strlen($root) + 1);
 
-            // A class file is named for its class; registration.php is a script, and loading it twice is refused.
-            if ($file->getExtension() !== 'php' || !ctype_upper($file->getBasename()[0])
-                || in_array(strtok($path, '/'), self::NOT_SHIPPED_CODE, true)
-            ) {
+            if ($file->getExtension() !== 'php' || !self::isAClassPath($path)) {
                 continue;
             }
 
@@ -109,5 +104,23 @@ class ConstructorDefaultsTest extends TestCase
         }
 
         return $classes;
+    }
+
+    /**
+     * A class file's path is its class name, so every part of it starts with a capital. That leaves out
+     * registration.php, the package's own vendor and docs, and var, where a package's suites write generated
+     * classes: asking for a class by such a path would load its file a second time. The tests are not shipped.
+     */
+    private static function isAClassPath(string $path): bool
+    {
+        $parts = explode('/', $path);
+
+        foreach ($parts as $part) {
+            if (!ctype_upper($part[0])) {
+                return false;
+            }
+        }
+
+        return $parts[0] !== 'Test';
     }
 }
