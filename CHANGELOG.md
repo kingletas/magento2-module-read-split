@@ -2,6 +2,13 @@
 
 All notable changes to this module are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- **A store in production mode no longer stops after `setup:di:compile` with this module installed.** In 1.0.0, once a store had compiled, every `bin/magento` command and every page the cache did not already hold failed with `Call to undefined method Kingletas\ReadSplit\Model\PrimaryOnlyTables::__set_state()`, whether or not the store had a `db/read_split` block. One class gave a constructor argument an object as its default, and the compiler copies every default into the store's generated metadata, where an object cannot be read back. The object is now made inside the constructor. **1.0.0 should not be installed on a store that compiles; a store in developer mode was not affected.** Seen and fixed on one Mage-OS 3.5.0 store: with 1.0.0 the compile left the store failing, and with this change the same deploy finishes and the store serves.
+- A test now refuses any class in the module whose constructor gives an argument an object as its default.
+
 ## 1.0.0 - 2026-10-06
 
 First release. Requires PHP 8.3 or later. Read-after-write across requests needs MariaDB with GTID replication; the README says what the module does without it.

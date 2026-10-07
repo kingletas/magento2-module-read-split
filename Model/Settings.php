@@ -14,6 +14,8 @@ namespace Kingletas\ReadSplit\Model;
  */
 class Settings
 {
+    private readonly PrimaryOnlyTables $primaryOnlyTables;
+
     /**
      * @param array<string, mixed> $replicaConfig the connection config the replica is opened with
      */
@@ -22,12 +24,15 @@ class Settings
         private readonly string $reason = '',
         private readonly array $replicaConfig = [],
         private readonly bool $pooled = false,
-        private readonly PrimaryOnlyTables $primaryOnlyTables = new PrimaryOnlyTables(),
+        ?PrimaryOnlyTables $primaryOnlyTables = null,
         private readonly int $positionLifetime = 30,
         private readonly int $maxLag = 30,
         private readonly int $readTimeout = 5,
         private readonly bool $positionLifetimeWasRaised = false
     ) {
+        // Made here and not as the argument's default: setup:di:compile copies every default into the store's
+        // generated metadata, and an object copied there stops the store from starting.
+        $this->primaryOnlyTables = $primaryOnlyTables ?? new PrimaryOnlyTables();
     }
 
     /**
